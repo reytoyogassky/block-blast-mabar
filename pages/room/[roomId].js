@@ -117,6 +117,13 @@ export default function RoomPage() {
   const [players, setPlayers]       = useState([]);
   const [roomData, setRoomData]     = useState(null);
 
+  // ── Opponent drag state (broadcast realtime) ──────────────────────────────
+  // oppDrag: { piece: {shape,color}, snap: {r,c} | null } | null
+  const [oppDrag, setOppDrag]       = useState(null);
+  const oppBoardRef                 = useRef(null);
+  const broadcastChannel            = useRef(null);
+  const dragBroadcastThrottle       = useRef(null);
+
   // ── Timer state ───────────────────────────────────────────────────────────
   const [timeLeft, setTimeLeft]     = useState(GAME_DURATION);
   const [gameStartAt, setGameStartAt] = useState(null);
@@ -193,6 +200,7 @@ export default function RoomPage() {
     joinRoom();
     subscribeToRoom();
     subscribeToPlayers();
+    subscribeToDragBroadcast();
 
     const poll = setInterval(async () => {
       const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
@@ -289,6 +297,28 @@ export default function RoomPage() {
       .subscribe();
   }
 
+  // ── Broadcast channel for realtime drag sync ──────────────────────────────
+  function subscribeToDragBroadcast() {
+    const ch = supabase.channel(`drag-${roomId}`, { config: { broadcast: { self: false } } });
+    ch.on('broadcast', { event: 'drag' }, ({ payload }) => {
+      if (!payload || payload.pid === playerId.current) return;
+      setOppDrag(payload.drag); // null = drag ended, or { piece, snap }
+    }).subscribe();
+    broadcastChannel.current = ch;
+  }
+
+  function broadcastDrag(dragPayload) {
+    // throttle to ~30fps
+    if (dragBroadcastThrottle.current) return;
+    dragBroadcastThrottle.current = setTimeout(() => {
+      dragBroadcastThrottle.current = null;
+    }, 33);
+    broadcastChannel.current?.send({
+      type: 'broadcast', event: 'drag',
+      payload: { pid: playerId.current, drag: dragPayload },
+    });
+  }
+
   // ── Supabase sync ─────────────────────────────────────────────────────────
   const syncDebounce = useRef(null);
   function syncState(board, pieces, score, isGameOver, survivalTime = null) {
@@ -322,8 +352,10 @@ export default function RoomPage() {
     sfxPickup();
     const cx = e.touches ? e.touches[0].clientX : e.clientX;
     const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    const piece = piecesStateRef.current[idx];
     setDrag({ idx, x: cx, y: cy });
     setSnap(null);
+    broadcastDrag({ piece, snap: null });
   }, [roomStatus]);
 
   const moveDrag = useCallback((e) => {
@@ -336,7 +368,9 @@ export default function RoomPage() {
     if (!cell) { setSnap(null); return; }
     const piece = piecesStateRef.current[drag.idx];
     if (!piece) { setSnap(null); return; }
-    setSnap({ r: cell.r, c: cell.c, valid: canPlace(boardStateRef.current, piece.shape, cell.r, cell.c) });
+    const snapData = { r: cell.r, c: cell.c, valid: canPlace(boardStateRef.current, piece.shape, cell.r, cell.c) };
+    setSnap(snapData);
+    broadcastDrag({ piece, snap: snapData });
   }, [drag]);
 
   const endDrag = useCallback((e) => {
@@ -348,6 +382,7 @@ export default function RoomPage() {
     const ok    = cell && piece && canPlace(boardStateRef.current, piece.shape, cell.r, cell.c);
     const savedIdx = drag.idx;
     setDrag(null); setSnap(null);
+    broadcastDrag(null);
 
     if (!ok) { sfxNoPlace(); return; }
     sfxDrop();
@@ -545,6 +580,15 @@ export default function RoomPage() {
     return s;
   }, [snap, drag, myPieces]);
 
+  // Ghost cells for opponent's dragging piece on their board
+  const oppDragGhostCells = useMemo(() => {
+    const s = new Set();
+    if (!oppDrag?.piece || !oppDrag?.snap) return s;
+    oppDrag.piece.shape.forEach((row, dr) =>
+      row.forEach((v, dc) => { if (v) s.add(`${oppDrag.snap.r+dr},${oppDrag.snap.c+dc}`); }));
+    return s;
+  }, [oppDrag]);
+
   const displayBoard = useMemo(() => {
     const d = myBoard.map(r => [...r]);
     if (snap && drag !== null && myPieces[drag.idx] && snap.valid) {
@@ -727,8 +771,31 @@ export default function RoomPage() {
                   <span className={styles.playerName}>{opponent.username}</span>
                   <span className={styles.scoreVal}>{(opponent.score || 0).toLocaleString()}</span>
                 </div>
-                <div className={styles.boardWrap} style={{ pointerEvents: 'none' }}>
-                  <Board board={opponent.board || emptyBoard()} cellSize={oppCellSize} />
+                <div className={styles.boardWrap} ref={oppBoardRef} style={{ pointerEvents: 'none' }}>
+                  <Board
+                    board={opponent.board || emptyBoard()}
+                    cellSize={oppCellSize}
+                    ghostCells={oppDragGhostCells}
+                    ghostValid={true}
+                  />
+                  {/* Opponent drag floating piece */}
+                  {oppDrag?.piece && oppDrag?.snap && (
+                    <div
+                      className={styles.oppFloater}
+                      style={{
+                        left: oppDrag.snap.c * (oppCellSize + Math.max(2, Math.round(oppCellSize * 0.065))) + Math.round(oppCellSize * 0.2),
+                        top:  oppDrag.snap.r * (oppCellSize + Math.max(2, Math.round(oppCellSize * 0.065))) + Math.round(oppCellSize * 0.2) - oppCellSize,
+                      }}
+                    >
+                      <PieceCanvas shape={oppDrag.piece.shape} color={oppDrag.piece.color} maxSize={oppCellSize * 2.5} />
+                    </div>
+                  )}
+                  {/* Dragging indicator badge */}
+                  {oppDrag?.piece && (
+                    <div className={styles.oppDragBadge}>
+                      ✋ {opponent.username} sedang drag...
+                    </div>
+                  )}
                   {opponent.is_game_over && (
                     <div className={styles.boardOverlay}>
                       <span className={styles.overText}>GAME OVER</span>

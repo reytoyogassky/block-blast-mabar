@@ -624,3 +624,36 @@
   .ssName    { width: 70px; }
   .fbRow     { gap: 6px; padding: 6px 8px; }
 }
+
+/* ── Opponent drag visual ───────────────────────────────────── */
+.oppFloater {
+  position: absolute;
+  pointer-events: none;
+  z-index: 8;
+  opacity: 0.75;
+  transform: translateY(-8px);
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.6));
+  transition: left 0.06s linear, top 0.06s linear;
+}
+
+.oppDragBadge {
+  position: absolute;
+  top: -26px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 800;
+  color: #2e7de8;
+  white-space: nowrap;
+  background: #06060f;
+  border: 1px solid #2e7de855;
+  border-radius: 6px;
+  padding: 3px 8px;
+  pointer-events: none;
+  animation: oppBadgePulse 1.2s ease infinite alternate;
+}
+
+@keyframes oppBadgePulse {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
