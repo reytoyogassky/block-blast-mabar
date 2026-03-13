@@ -32,6 +32,14 @@ function getPlayerId() {
   return id;
 }
 
+function normalizeBoard(board) {
+  // Ensure board is always a valid 8x8 array (DB JSON can come back malformed)
+  if (!Array.isArray(board) || board.length !== 8) return emptyBoard();
+  return board.map(row =>
+    Array.isArray(row) && row.length === 8 ? row : Array(8).fill(null)
+  );
+}
+
 function formatTime(secs) {
   const s = Math.max(0, secs);
   const m = Math.floor(s / 60);
@@ -75,7 +83,7 @@ function spawnParticles(canvasEl, cells, cellSize, gap, pad, color) {
       ctx.globalAlpha = Math.max(0, p.life);
       ctx.fillStyle = p.color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(0.1, p.size * p.life), 0, Math.PI * 2);
       ctx.fill();
     });
     ctx.globalAlpha = 1;
@@ -105,7 +113,7 @@ export default function RoomPage() {
   const GAP  = Math.max(2, Math.round(cellSize * 0.065));
   const STEP = cellSize + GAP;
   const PAD  = Math.round(cellSize * 0.2);
-  const oppCellSize = isMobile ? Math.floor(cellSize * 0.55) : cellSize;
+  const oppCellSize = isMobile ? Math.floor(cellSize * 0.55) : cellSize; // same size desktop
 
   // ── Game state ────────────────────────────────────────────────────────────
   const [myBoard, setMyBoard]       = useState(emptyBoard());
@@ -329,31 +337,47 @@ export default function RoomPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}` },
         () => fetchPlayers())
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}` },
-        payload => {
+        async (payload) => {
           const changed = payload.new;
           if (!changed || changed.player_id === playerId.current) return;
-          setOpponent(changed);
-          setOppWantRematch(changed.ready_for_rematch || false);
+          // Fetch full row — payload.new may have truncated JSONB (board/pieces)
+          const { data } = await supabase
+            .from('players')
+            .select('*')
+            .eq('room_id', roomId)
+            .eq('player_id', changed.player_id)
+            .maybeSingle();
+          if (data) {
+            setOpponent(data);
+            setOppWantRematch(data.ready_for_rematch || false);
+          }
         })
       .subscribe();
   }
 
   // ── Broadcast channel for realtime drag sync ──────────────────────────────
   function subscribeToDragBroadcast() {
-    const ch = supabase.channel(`drag-${roomId}`, { config: { broadcast: { self: false } } });
+    // Use broadcast config — required for Supabase Realtime broadcast to work cross-client
+    const ch = supabase.channel(`drag:${roomId}`, {
+      config: { broadcast: { self: false, ack: false } },
+    });
+    broadcastChannel.current = ch;
     ch.on('broadcast', { event: 'drag' }, ({ payload }) => {
       if (!payload || payload.pid === playerId.current) return;
-      setOppDrag(payload.drag); // null = drag ended, or { piece, snap }
-    }).subscribe();
-    broadcastChannel.current = ch;
+      setOppDrag(payload.drag ?? null);
+    }).subscribe((status) => {
+      console.log('[drag-broadcast]', status);
+    });
   }
 
   function broadcastDrag(dragPayload) {
-    // throttle to ~30fps
-    if (dragBroadcastThrottle.current) return;
-    dragBroadcastThrottle.current = setTimeout(() => {
-      dragBroadcastThrottle.current = null;
-    }, 33);
+    // Always send null (drag end) immediately, throttle move events to ~30fps
+    if (dragPayload !== null && dragBroadcastThrottle.current) return;
+    if (dragPayload !== null) {
+      dragBroadcastThrottle.current = setTimeout(() => {
+        dragBroadcastThrottle.current = null;
+      }, 33);
+    }
     broadcastChannel.current?.send({
       type: 'broadcast', event: 'drag',
       payload: { pid: playerId.current, drag: dragPayload },
@@ -837,23 +861,28 @@ export default function RoomPage() {
                 </div>
                 <div className={styles.boardWrap} ref={oppBoardRef} style={{ pointerEvents: 'none' }}>
                   <Board
-                    board={opponent.board || emptyBoard()}
+                    board={normalizeBoard(opponent.board)}
                     cellSize={oppCellSize}
                     ghostCells={oppDragGhostCells}
                     ghostValid={true}
                   />
                   {/* Opponent drag floating piece */}
-                  {oppDrag?.piece && oppDrag?.snap && (
-                    <div
-                      className={styles.oppFloater}
-                      style={{
-                        left: oppDrag.snap.c * (oppCellSize + Math.max(2, Math.round(oppCellSize * 0.065))) + Math.round(oppCellSize * 0.2),
-                        top:  oppDrag.snap.r * (oppCellSize + Math.max(2, Math.round(oppCellSize * 0.065))) + Math.round(oppCellSize * 0.2) - oppCellSize,
-                      }}
-                    >
-                      <PieceCanvas shape={oppDrag.piece.shape} color={oppDrag.piece.color} maxSize={oppCellSize * 2.5} />
-                    </div>
-                  )}
+                  {oppDrag?.piece && oppDrag?.snap && (() => {
+                    const oGAP = Math.max(2, Math.round(oppCellSize * 0.065));
+                    const oPAD = Math.round(oppCellSize * 0.2);
+                    const oSTEP = oppCellSize + oGAP;
+                    return (
+                      <div
+                        className={styles.oppFloater}
+                        style={{
+                          left: oppDrag.snap.c * oSTEP + oPAD,
+                          top:  oppDrag.snap.r * oSTEP + oPAD - oppCellSize * 0.5,
+                        }}
+                      >
+                        <PieceCanvas shape={oppDrag.piece.shape} color={oppDrag.piece.color} maxSize={oppCellSize * 3} />
+                      </div>
+                    );
+                  })()}
                   {/* Dragging indicator badge */}
                   {oppDrag?.piece && (
                     <div className={styles.oppDragBadge}>
