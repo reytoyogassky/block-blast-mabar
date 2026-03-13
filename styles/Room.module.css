@@ -3,86 +3,88 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 12px 10px 24px;
   background: #0a0a14;
   position: relative;
   overflow: hidden;
 }
 
-/* Header */
 .header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
-  max-width: 900px;
+  max-width: 940px;
   flex-wrap: wrap;
 }
 
 .backBtn {
   background: transparent;
   border: 1.5px solid #1e1e35;
-  color: #888;
+  color: #666;
   border-radius: 8px;
-  padding: 7px 14px;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 800;
   transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
 }
 .backBtn:hover { border-color: #f5a623; color: #f5a623; }
 
 .codeBtn {
   background: #0e0e1c;
   border: 1.5px solid #22223a;
-  color: #ccc;
+  color: #aaa;
   border-radius: 8px;
-  padding: 7px 14px;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 1px;
   transition: background 0.15s;
+  white-space: nowrap;
 }
 .codeBtn:hover { background: #161628; }
 .codeBtn strong { color: #f5a623; letter-spacing: 3px; }
 
 .statusBadge {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-radius: 8px;
   letter-spacing: 1px;
+  white-space: nowrap;
 }
-.statusBadge[data-status='waiting'] { background: #1a1505; color: #f5a623; border: 1px solid #f5a62333; }
-.statusBadge[data-status='playing'] { background: #051a0e; color: #29c76a; border: 1px solid #29c76a33; }
-.statusBadge[data-status='finished'] { background: #0d0d1a; color: #888; border: 1px solid #22223a; }
+.statusBadge[data-status='waiting']  { background: #1a1505; color: #f5a623; border: 1px solid #f5a62333; }
+.statusBadge[data-status='playing']  { background: #051a0e; color: #29c76a; border: 1px solid #29c76a33; }
+.statusBadge[data-status='finished'] { background: #0d0d1a; color: #666;    border: 1px solid #22223a; }
 
-/* Arena — two boards side by side */
 .arena {
   display: flex;
   align-items: flex-start;
-  gap: 24px;
-  width: 100%;
-  max-width: 900px;
-  flex-wrap: wrap;
   justify-content: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 940px;
 }
 
 .vs {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 900;
-  color: #2a2a45;
+  color: #22223a;
   align-self: center;
-  letter-spacing: 4px;
-  padding-top: 40px;
+  letter-spacing: 3px;
+  flex-shrink: 0;
+  padding-top: 36px;
 }
 
-/* Player section */
 .playerSection {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
+  flex: 1;
+  min-width: 0;
 }
 
 .playerHeader {
@@ -90,43 +92,37 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 0 4px;
+  padding: 0 2px;
 }
 
 .playerName {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 900;
-  color: #ccc;
+  color: #bbb;
   letter-spacing: 1px;
-  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 55%;
 }
 
 .scoreVal {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 900;
   color: #f5a623;
   font-variant-numeric: tabular-nums;
-  transition: color 0.15s;
 }
 
 .bump { animation: bump 0.3s ease; }
 @keyframes bump {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.25); color: #fff; }
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.28); color: #fff; }
   100% { transform: scale(1); }
 }
 
-/* Board container */
 .boardWrap {
   position: relative;
-  background: #0a0a16;
-  border-radius: 16px;
-  padding: 8px;
-  border: 2px solid #1a1a2e;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  display: inline-block;
 }
 
 .snapRing {
@@ -140,47 +136,48 @@
 
 .combo {
   position: absolute;
-  top: -44px; left: 50%;
+  top: -40px; left: 50%;
   transform: translateX(-50%);
-  font-size: 16px; font-weight: 900;
+  font-size: 14px; font-weight: 900;
   color: #f5a623; white-space: nowrap;
   pointer-events: none;
   text-shadow: 0 2px 10px #f5a62388;
   animation: rise 0.9s ease forwards;
 }
-@keyframes rise { 0% { opacity: 1; top: -44px; } 100% { opacity: 0; top: -90px; } }
+@keyframes rise { 0% { opacity: 1; top: -40px; } 100% { opacity: 0; top: -80px; } }
 
 .boardOverlay {
   position: absolute; inset: 0;
-  border-radius: 16px;
-  background: rgba(6,6,18,0.88);
+  border-radius: 14px;
+  background: rgba(6,6,18,0.85);
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 6px;
+  gap: 4px;
 }
-.overText { font-size: 18px; font-weight: 900; color: #e84040; letter-spacing: 2px; }
-.overScore { font-size: 32px; font-weight: 900; color: #f5a623; }
+.overText  { font-size: 14px; font-weight: 900; color: #e84040; letter-spacing: 2px; }
+.overScore { font-size: 26px; font-weight: 900; color: #f5a623; }
 
-/* Tray */
 .tray {
-  display: flex; gap: 10px;
+  display: flex;
+  gap: 8px;
   background: #0a0a16;
   border: 1.5px solid #1a1a2e;
-  border-radius: 16px;
-  padding: 12px 14px;
+  border-radius: 14px;
+  padding: 10px 12px;
 }
 
 .trayMirror {
-  display: flex; gap: 10px;
+  display: flex;
+  gap: 6px;
   background: #0a0a16;
   border: 1.5px solid #1a1a2e;
-  border-radius: 16px;
-  padding: 12px 14px;
-  opacity: 0.6;
+  border-radius: 12px;
+  padding: 8px 10px;
+  opacity: 0.65;
 }
 
 .slot {
-  width: 82px; height: 82px;
+  width: 76px; height: 76px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 10px;
   background: #141424;
@@ -193,7 +190,7 @@
 .slot.lifting { transform: scale(1.1) translateY(-5px); box-shadow: 0 14px 36px rgba(0,0,0,0.7); }
 
 .slotMini {
-  width: 66px; height: 66px;
+  width: 56px; height: 56px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 8px;
   background: #141424;
@@ -202,69 +199,69 @@
 }
 
 .slotEmpty {
-  width: 82px; height: 82px;
+  width: 76px; height: 76px;
   border-radius: 10px;
   background: #0e0e1c;
   border: 1.5px dashed #1a1a2e;
-  opacity: 0.2;
+  opacity: 0.18;
   flex-shrink: 0;
 }
 
-/* Waiting panel */
 .waitingPanel {
-  width: 400px;
-  min-height: 400px;
+  flex: 1;
+  min-height: 280px;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 12px;
+  gap: 10px;
   background: #0a0a16;
   border: 2px dashed #1e1e35;
-  border-radius: 16px;
-  padding: 32px;
-  color: #3a3a60;
+  border-radius: 14px;
+  padding: 24px;
+  color: #2a2a45;
+  text-align: center;
 }
 
 .waitingDot {
-  width: 48px; height: 48px;
+  width: 40px; height: 40px;
   border-radius: 50%;
   border: 3px solid #1e1e35;
   border-top-color: #f5a623;
   animation: spin 1s linear infinite;
+  flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.waitingPanel p { font-size: 14px; font-weight: 800; color: #4a4a70; }
-.waitingHint { font-size: 11px !important; color: #2a2a45 !important; }
+.waitingPanel p { font-size: 13px; font-weight: 800; color: #3a3a60; }
+.waitingHint { font-size: 10px !important; color: #1e1e35 !important; }
 
 .shareBtn {
-  margin-top: 8px;
   background: transparent;
-  border: 1.5px solid #f5a62366;
+  border: 1.5px solid #f5a62355;
   color: #f5a623;
   border-radius: 10px;
-  padding: 10px 20px;
-  font-size: 13px; font-weight: 900;
+  padding: 9px 18px;
+  font-size: 12px; font-weight: 900;
   letter-spacing: 2px;
   transition: background 0.15s, border-color 0.15s;
+  margin-top: 4px;
 }
 .shareBtn:hover { background: #f5a62315; border-color: #f5a623; }
 
-/* Floating drag piece */
 .floater {
   position: fixed;
   pointer-events: none;
   z-index: 9999;
-  transform: translate(-50%, -60%) scale(1.22) rotate(-1deg);
+  transform: translate(-50%, -62%) scale(1.2) rotate(-1deg);
   filter: drop-shadow(0 12px 28px rgba(0,0,0,0.8));
 }
 
-/* Winner overlay */
 .winnerOverlay {
   position: fixed; inset: 0;
   background: rgba(6,6,18,0.85);
   display: flex; align-items: center; justify-content: center;
   z-index: 100;
   animation: fadeIn 0.4s ease;
+  padding: 20px;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -272,38 +269,43 @@
   background: #0e0e1c;
   border: 2px solid #22223a;
   border-radius: 20px;
-  padding: 36px 48px;
+  padding: 28px 36px;
   display: flex; flex-direction: column;
-  align-items: center; gap: 16px;
-  min-width: 300px;
+  align-items: center; gap: 14px;
+  width: 100%; max-width: 320px;
   animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 @keyframes popIn { from { transform: scale(0.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-.winnerEmoji { font-size: 56px; }
-.winnerTitle { font-size: 28px; font-weight: 900; color: #fff; letter-spacing: 2px; }
+.winnerEmoji { font-size: 48px; }
+.winnerTitle { font-size: 24px; font-weight: 900; color: #fff; letter-spacing: 2px; }
 
-.winnerScores {
-  display: flex; flex-direction: column; gap: 8px;
-  width: 100%;
-}
+.winnerScores { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .winnerScores div { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #141424; border-radius: 8px; }
-.wName { font-size: 12px; font-weight: 800; color: #aaa; }
-.wScore { font-size: 20px; font-weight: 900; color: #f5a623; font-variant-numeric: tabular-nums; }
+.wName  { font-size: 12px; font-weight: 800; color: #888; }
+.wScore { font-size: 18px; font-weight: 900; color: #f5a623; font-variant-numeric: tabular-nums; }
 
 .homeBtn {
   background: #f5a623; color: #0a0a14;
   border: none; border-radius: 12px;
-  padding: 12px 28px;
-  font-size: 14px; font-weight: 900;
+  padding: 11px 28px;
+  font-size: 13px; font-weight: 900;
   letter-spacing: 1px;
-  margin-top: 8px;
+  margin-top: 4px;
   transition: filter 0.15s, transform 0.1s;
 }
 .homeBtn:hover { filter: brightness(1.12); transform: translateY(-1px); }
 
-@media (max-width: 700px) {
-  .arena { gap: 16px; }
-  .vs { padding-top: 0; }
-  .waitingPanel { width: 320px; min-height: 300px; }
+@media (max-width: 639px) {
+  .page   { gap: 8px; padding: 8px 8px 20px; }
+  .arena  { flex-direction: column; align-items: center; gap: 10px; }
+  .vs     { padding-top: 0; font-size: 12px; letter-spacing: 6px; }
+  .playerSection { width: 100%; }
+  .tray   { gap: 5px; padding: 8px 10px; }
+  .slot   { width: 64px; height: 64px; }
+  .slotEmpty { width: 64px; height: 64px; }
+  .slotMini  { width: 44px; height: 44px; }
+  .trayMirror { gap: 4px; padding: 6px 8px; }
+  .waitingPanel { min-height: 160px; padding: 18px; }
+  .scoreVal { font-size: 18px; }
 }

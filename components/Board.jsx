@@ -1,24 +1,22 @@
 import styles from '../styles/Board.module.css';
 
-const CORNER = 8;
-
-function blockRadius(N, S, E, W) {
-  const tl = (!N && !W) ? CORNER : 0;
-  const tr = (!N && !E) ? CORNER : 0;
-  const br = (!S && !E) ? CORNER : 0;
-  const bl = (!S && !W) ? CORNER : 0;
-  return `${tl}px ${tr}px ${br}px ${bl}px`;
-}
+const R = 7;
 
 /**
  * board: 8x8 array of null | {bg, dark, light, ghost?}
- * clearing: {rows, cols} arrays of indexes being cleared
- * ghostCells: Set of "r,c" strings
+ * clearing: {rows, cols}
+ * ghostCells: Set of "r,c"
  * ghostValid: bool
- * small: bool — render smaller (opponent view)
+ * cellSize: number (px) — controls board size, for responsive
  */
-export default function Board({ board, clearing = { rows: [], cols: [] }, ghostCells = new Set(), ghostValid = true, small = false }) {
-  const CS = small ? 26 : 46;
+export default function Board({
+  board,
+  clearing = { rows: [], cols: [] },
+  ghostCells = new Set(),
+  ghostValid = true,
+  cellSize = 46,
+}) {
+  const GAP = Math.max(2, Math.round(cellSize * 0.065));
   const cells = [];
 
   for (let r = 0; r < 8; r++) {
@@ -27,11 +25,13 @@ export default function Board({ board, clearing = { rows: [], cols: [] }, ghostC
       const color = board[r][c];
       const isClearing = (clearing.rows.includes(r) || clearing.cols.includes(c)) && !!color;
       const isGhostBad = ghostCells.has(key) && !ghostValid;
+      const isGhostGood = ghostCells.has(key) && ghostValid && !color;
+      const sz = { width: cellSize, height: cellSize };
 
-      if (!color && !isGhostBad) {
+      if (!color && !isGhostBad && !isGhostGood) {
         cells.push(
-          <div key={key} className={styles.cell} style={{ width: CS, height: CS }}>
-            <div className={styles.cellInner} />
+          <div key={key} className={styles.cell} style={sz}>
+            <div className={styles.empty} style={{ borderRadius: R }} />
           </div>
         );
         continue;
@@ -39,47 +39,55 @@ export default function Board({ board, clearing = { rows: [], cols: [] }, ghostC
 
       if (isGhostBad) {
         cells.push(
-          <div key={key} className={styles.cell} style={{ width: CS, height: CS }}>
-            <div className={styles.ghostBad} />
+          <div key={key} className={styles.cell} style={sz}>
+            <div className={styles.badGhost} style={{ borderRadius: R }} />
           </div>
         );
         continue;
       }
 
-      const N = r > 0 && board[r-1][c];
-      const S = r < 7 && board[r+1][c];
-      const E = c < 7 && board[r][c+1];
-      const W = c > 0 && board[r][c-1];
-      const rad = blockRadius(N, S, E, W);
+      if (isGhostGood) {
+        cells.push(
+          <div key={key} className={styles.cell} style={sz}>
+            <div className={styles.goodGhost} style={{ borderRadius: R }} />
+          </div>
+        );
+        continue;
+      }
+
       const isGhost = color.ghost;
-      const isClr = isClearing;
 
       cells.push(
-        <div key={key} className={`${styles.cell} ${isClr ? styles.clearing : ''}`} style={{ width: CS, height: CS }}>
+        <div key={key} className={`${styles.cell} ${isClearing ? styles.clearing : ''}`} style={sz}>
           <div
             className={styles.block}
             style={{
               background: color.bg,
-              borderRadius: rad,
-              opacity: isGhost ? 0.5 : 1,
+              borderColor: color.dark,
+              opacity: isGhost ? 0.45 : 1,
+              borderRadius: R,
             }}
           >
-            {!N && (
-              <div className={styles.shine} style={{ borderRadius: `${(!N&&!W)?CORNER:0}px ${(!N&&!E)?CORNER:0}px 0 0` }} />
-            )}
-            {!S && (
-              <div className={styles.shadow} style={{ borderRadius: `0 0 ${(!S&&!E)?CORNER:0}px ${(!S&&!W)?CORNER:0}px` }} />
-            )}
+            <div className={styles.shine} style={{ borderRadius: `${R}px ${R}px 0 0` }} />
+            <div className={styles.shadow} style={{ borderRadius: `0 0 ${R}px ${R}px` }} />
           </div>
         </div>
       );
     }
   }
 
+  const totalGrid = cellSize * 8 + GAP * 7;
+  const pad = Math.round(cellSize * 0.2);
+
   return (
     <div
       className={styles.board}
-      style={{ gridTemplateColumns: `repeat(8, ${CS}px)`, gridTemplateRows: `repeat(8, ${CS}px)` }}
+      style={{
+        gridTemplateColumns: `repeat(8, ${cellSize}px)`,
+        gridTemplateRows: `repeat(8, ${cellSize}px)`,
+        gap: GAP,
+        padding: pad,
+      }}
     >
       {cells}
     </div>

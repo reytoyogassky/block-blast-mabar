@@ -10,9 +10,15 @@ import Board from '../../components/Board';
 import PieceCanvas from '../../components/PieceCanvas';
 import styles from '../../styles/Room.module.css';
 
-const CS = 46;
-const STEP = CS;
-const PAD = 8;
+function useWindowWidth() {
+  const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 800);
+  useEffect(() => {
+    const handler = () => setW(window.innerWidth);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  return w;
+}
 
 function getPlayerId() {
   let id = localStorage.getItem('bb_player_id');
@@ -23,6 +29,29 @@ function getPlayerId() {
 export default function RoomPage() {
   const router = useRouter();
   const { roomId, name } = router.query;
+  const windowWidth = useWindowWidth();
+
+  // Responsive cell size: fill ~90% of the narrower half (or full on mobile)
+  // Mobile (<600px): one board, fit inside screen width minus padding
+  // Desktop: two boards side by side, each ~half screen
+  const isMobile = windowWidth < 640;
+  const cellSize = useMemo(() => {
+    const PAD_TOTAL = 40; // page padding + board padding
+    const available = isMobile
+      ? windowWidth - PAD_TOTAL
+      : Math.min(windowWidth / 2 - 60, 420);
+    // board = 8 cells + 7 gaps (gap ≈ 6.5% of cell) + board padding
+    // totalGrid ≈ cellSize * 8 + gap * 7, gap = cellSize * 0.065
+    // totalGrid = cellSize * (8 + 7*0.065) = cellSize * 8.455
+    const raw = Math.floor(available / 8.7);
+    return Math.max(28, Math.min(46, raw));
+  }, [windowWidth, isMobile]);
+
+  const GAP = Math.max(2, Math.round(cellSize * 0.065));
+  const STEP = cellSize + GAP;
+  const PAD = Math.round(cellSize * 0.2);
+
+  const oppCellSize = isMobile ? Math.floor(cellSize * 0.55) : cellSize;
 
   const [myBoard, setMyBoard] = useState(emptyBoard());
   const [myPieces, setMyPieces] = useState(() => make3Pieces());
@@ -184,8 +213,8 @@ export default function RoomPage() {
     const rect = boardRef.current.getBoundingClientRect();
     const x = cx - rect.left - PAD;
     const y = cy - rect.top - PAD;
-    const c = Math.round((x - CS / 2) / STEP);
-    const r = Math.round((y - CS / 2) / STEP);
+    const c = Math.round((x - cellSize / 2) / STEP);
+    const r = Math.round((y - cellSize / 2) / STEP);
     return { r, c };
   }
 
@@ -313,8 +342,8 @@ export default function RoomPage() {
   let snapBox = null;
   if (snap && drag !== null && myPieces[drag.idx]) {
     const p = myPieces[drag.idx];
-    const sw = p.shape[0].length * STEP;
-    const sh = p.shape.length * STEP;
+    const sw = p.shape[0].length * STEP - GAP;
+    const sh = p.shape.length * STEP - GAP;
     snapBox = (
       <div className={styles.snapRing} style={{
         left: snap.c * STEP + PAD, top: snap.r * STEP + PAD,
@@ -374,6 +403,7 @@ export default function RoomPage() {
                 clearing={clearing}
                 ghostCells={ghostCells}
                 ghostValid={snap?.valid ?? true}
+                cellSize={cellSize}
               />
               {snapBox}
               {combo && <div key={comboKey} className={styles.combo}>{combo}</div>}
@@ -397,7 +427,7 @@ export default function RoomPage() {
                     onMouseDown={e => startDrag(i, e)}
                     onTouchStart={e => startDrag(i, e)}
                   >
-                    <PieceCanvas shape={p.shape} color={p.color} maxSize={78} />
+                    <PieceCanvas shape={p.shape} color={p.color} maxSize={isMobile ? 62 : 78} />
                   </div>
                 );
               })}
@@ -416,7 +446,7 @@ export default function RoomPage() {
                   <span className={styles.scoreVal}>{(opponent.score || 0).toLocaleString()}</span>
                 </div>
                 <div className={styles.boardWrap} style={{ pointerEvents: 'none' }}>
-                  <Board board={opponent.board || emptyBoard()} small={false} />
+                  <Board board={opponent.board || emptyBoard()} cellSize={oppCellSize} />
                   {opponent.is_game_over && (
                     <div className={styles.boardOverlay}>
                       <span className={styles.overText}>GAME OVER</span>
@@ -426,7 +456,7 @@ export default function RoomPage() {
                 </div>
                 <div className={styles.trayMirror}>
                   {(opponent.pieces || []).map((p, i) => (
-                    p ? <div key={i} className={styles.slotMini}><PieceCanvas shape={p.shape} color={p.color} maxSize={56} /></div>
+                    p ? <div key={i} className={styles.slotMini}><PieceCanvas shape={p.shape} color={p.color} maxSize={isMobile ? 44 : 56} /></div>
                        : <div key={i} className={styles.slotEmpty} />
                   ))}
                 </div>
