@@ -65,7 +65,23 @@ export default function RoomPage() {
     subscribeToRoom();
     subscribeToPlayers();
 
+    // Polling fallback: re-check every 3s while waiting, in case realtime is slow
+    const poll = setInterval(async () => {
+      const { data: room } = await supabase
+        .from('rooms').select('status').eq('id', roomId).single();
+      if (!room) return;
+      setRoomStatus(prev => {
+        if (prev !== room.status) return room.status;
+        return prev;
+      });
+      // If still waiting, re-fetch players to detect new joiner
+      if (room.status === 'waiting') fetchPlayers();
+      // If playing, clear the interval
+      if (room.status !== 'waiting') clearInterval(poll);
+    }, 3000);
+
     return () => {
+      clearInterval(poll);
       supabase.removeAllChannels();
     };
   }, [roomId]);
@@ -102,12 +118,23 @@ export default function RoomPage() {
     const opp = data.find(p => p.player_id !== playerId.current);
     if (opp) setOpponent(opp);
 
-    // If 2 players and room is waiting, start the game
+    // If 2 players present, make sure game starts
     if (data.length >= 2) {
-      const { data: room } = await supabase.from('rooms').select('status, host_id').eq('id', roomId).single();
-      if (room?.status === 'waiting' && room.host_id === playerId.current) {
-        await supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
+      const { data: room } = await supabase
+        .from('rooms')
+        .select('status, host_id')
+        .eq('id', roomId)
+        .single();
+
+      if (room?.status === 'waiting') {
+        if (room.host_id === playerId.current) {
+          // Host triggers the start — this fires a realtime UPDATE for everyone
+          await supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
+        }
+        // Both players set locally immediately — don't wait for realtime
         setRoomStatus('playing');
+      } else if (room?.status) {
+        setRoomStatus(room.status);
       }
     }
   }
@@ -125,7 +152,13 @@ export default function RoomPage() {
   function subscribeToPlayers() {
     supabase.channel(`players-${roomId}`)
       .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}`,
+        event: 'INSERT', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}`,
+      }, payload => {
+        // New player joined — refresh full player list & maybe start game
+        fetchPlayers();
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'players', filter: `room_id=eq.${roomId}`,
       }, payload => {
         const changed = payload.new;
         if (!changed || changed.player_id === playerId.current) return;
