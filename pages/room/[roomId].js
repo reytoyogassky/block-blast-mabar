@@ -89,6 +89,7 @@ function spawnParticles(canvasEl, cells, cellSize, gap, pad, color) {
 export default function RoomPage() {
   const router = useRouter();
   const { roomId, name } = router.query;
+  const isReady = router.isReady;
   const windowWidth = useWindowWidth();
 
   const isMobile = windowWidth < 640;
@@ -193,7 +194,7 @@ export default function RoomPage() {
 
   // ── INIT ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!roomId) return;
+    if (!isReady || !roomId) return;
     playerId.current = getPlayerId();
     username.current = name || localStorage.getItem('bb_username') || 'Player';
 
@@ -218,7 +219,7 @@ export default function RoomPage() {
       stopBgMusic();
       supabase.removeAllChannels();
     };
-  }, [roomId]);
+  }, [isReady, roomId]);
 
   useEffect(() => {
     if (!boardRef.current || !particleRef.current) return;
@@ -228,14 +229,46 @@ export default function RoomPage() {
   }, [cellSize]);
 
   async function joinRoom() {
-    const pieces = make3Pieces(null);
-    setMyPieces(pieces);
-    await supabase.from('players').upsert({
-      room_id: roomId, player_id: playerId.current,
-      username: username.current, board: emptyBoard(),
-      pieces, score: 0, is_game_over: false,
-      survival_time: 0, ready_for_rematch: false,
-    }, { onConflict: 'room_id,player_id' });
+    // Check if player already exists (reconnect scenario)
+    const { data: existing } = await supabase
+      .from('players')
+      .select('*')
+      .eq('room_id', roomId)
+      .eq('player_id', playerId.current)
+      .single();
+
+    if (existing) {
+      // Reconnect: restore state from DB, don't reset
+      setMyBoard(existing.board || emptyBoard());
+      setMyPieces(existing.pieces || make3Pieces(null));
+      setMyScore(existing.score || 0);
+      setMyGameOver(existing.is_game_over || false);
+      gameOverRef.current = existing.is_game_over || false;
+      // Update username in case it changed
+      await supabase.from('players')
+        .update({ username: username.current, updated_at: new Date().toISOString() })
+        .eq('room_id', roomId).eq('player_id', playerId.current);
+    } else {
+      // New player: insert fresh
+      const pieces = make3Pieces(null);
+      setMyPieces(pieces);
+      const { error } = await supabase.from('players').insert({
+        room_id: roomId, player_id: playerId.current,
+        username: username.current, board: emptyBoard(),
+        pieces, score: 0, is_game_over: false,
+        survival_time: 0, ready_for_rematch: false,
+      });
+      if (error) {
+        // Fallback to upsert if insert fails (race condition)
+        await supabase.from('players').upsert({
+          room_id: roomId, player_id: playerId.current,
+          username: username.current, board: emptyBoard(),
+          pieces, score: 0, is_game_over: false,
+          survival_time: 0, ready_for_rematch: false,
+        }, { onConflict: 'room_id,player_id' });
+      }
+    }
+
     const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
     if (room) {
       setRoomStatus(room.status);
@@ -257,12 +290,24 @@ export default function RoomPage() {
     if (data.length >= 2) {
       const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
       if (room?.status === 'waiting') {
+        // Only host starts the game — but both players set their local status
         if (room.host_id === playerId.current) {
           const startAt = new Date().toISOString();
           await supabase.from('rooms').update({ status: 'playing', game_start_at: startAt }).eq('id', roomId);
           setGameStartAt(startAt);
+          setRoomStatus('playing');
+        } else {
+          // Non-host: wait for room subscription to broadcast 'playing'
+          // but also poll once more to avoid stuck waiting state
+          setTimeout(async () => {
+            const { data: r2 } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+            if (r2?.status === 'playing') {
+              setRoomStatus('playing');
+              setRoomData(r2);
+              if (r2.game_start_at) setGameStartAt(r2.game_start_at);
+            }
+          }, 1500);
         }
-        setRoomStatus('playing');
       } else if (room) {
         setRoomStatus(room.status);
         setRoomData(room);
