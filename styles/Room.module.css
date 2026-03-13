@@ -309,3 +309,80 @@
   .waitingPanel { min-height: 160px; padding: 18px; }
   .scoreVal { font-size: 18px; }
 }
+
+/* ── Sound & Visual Effects ────────────────────────────────── */
+
+/* Mute button */
+.muteBtn {
+  background: #0e0e1c;
+  border: 1.5px solid #22223a;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 16px;
+  line-height: 1;
+  transition: background 0.15s, transform 0.1s;
+  margin-left: auto;
+}
+.muteBtn:hover { background: #1c1c30; transform: scale(1.1); }
+
+/* Screen shake — applied to .page */
+.shake {
+  animation: shake 0.38s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes shake {
+  0%,100% { transform: translate(0,0) rotate(0deg); }
+  15%      { transform: translate(-6px, 2px) rotate(-1deg); }
+  30%      { transform: translate(6px, -2px) rotate(1deg); }
+  45%      { transform: translate(-4px, 3px) rotate(-0.5deg); }
+  60%      { transform: translate(4px, -1px) rotate(0.5deg); }
+  75%      { transform: translate(-2px, 1px) rotate(0deg); }
+  90%      { transform: translate(2px, -1px); }
+}
+
+/* White flash overlay — fixed over everything */
+.flashOverlay {
+  position: fixed; inset: 0;
+  background: #fff;
+  pointer-events: none;
+  z-index: 9998;
+  animation: flashFade 0.18s ease-out forwards;
+}
+@keyframes flashFade {
+  0%   { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
+/* Particle canvas — absolutely positioned over board */
+.particleCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+/* Confetti burst on winner card */
+.confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 20px;
+}
+.confetti span {
+  position: absolute;
+  top: -10px;
+  left: calc(var(--i) * 6.25%);
+  width: 8px; height: 14px;
+  border-radius: 2px;
+  background: hsl(calc(var(--i) * 22), 90%, 60%);
+  animation: confettiFall 1.4s ease-in calc(var(--i) * 0.07s) forwards;
+  transform-origin: 50% 0;
+}
+@keyframes confettiFall {
+  0%   { top: -10px; opacity: 1; transform: rotate(0deg) scaleX(1); }
+  50%  { opacity: 1;  transform: rotate(180deg) scaleX(-1); }
+  100% { top: 110%;  opacity: 0; transform: rotate(360deg) scaleX(1); }
+}
