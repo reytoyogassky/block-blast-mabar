@@ -277,6 +277,7 @@
 
 .winnerEmoji { font-size: 48px; }
 .winnerTitle { font-size: 24px; font-weight: 900; color: #fff; letter-spacing: 2px; }
+.winnerSub { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 4px; margin-bottom: 2px; }
 
 .winnerScores { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .winnerScores div { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #141424; border-radius: 8px; }

@@ -14,7 +14,7 @@ import Board from '../../components/Board';
 import PieceCanvas from '../../components/PieceCanvas';
 import styles from '../../styles/Room.module.css';
 
-const GAME_DURATION = 180; // 3 menit default
+const GAME_DURATION = 0; // tidak dipakai sebagai batas — timer maju terus
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 800);
@@ -134,7 +134,7 @@ export default function RoomPage() {
   const dragBroadcastThrottle       = useRef(null);
 
   // ── Timer state ───────────────────────────────────────────────────────────
-  const [timeLeft, setTimeLeft]     = useState(GAME_DURATION);
+  const [timeLeft, setTimeLeft]     = useState(0);
   const [gameStartAt, setGameStartAt] = useState(null);
   const timerRef                    = useRef(null);
 
@@ -185,14 +185,9 @@ export default function RoomPage() {
     if (roomStatus !== 'playing' || !gameStartAt) return;
 
     function tick() {
+      // Timer maju — hitung elapsed sejak game mulai
       const elapsed = Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000);
-      const remaining = Math.max(0, GAME_DURATION - elapsed);
-      setTimeLeft(remaining);
-
-      if (remaining <= 0 && !gameOverRef.current) {
-        // Time's up — trigger game over for this player
-        handleGameOver(scoreRef.current, boardStateRef.current, piecesStateRef.current, true);
-      }
+      setTimeLeft(elapsed);
     }
 
     tick();
@@ -529,7 +524,7 @@ export default function RoomPage() {
     const elapsed = gameStartAt
       ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000)
       : 0;
-    const survivalTime = Math.min(elapsed, GAME_DURATION);
+    const survivalTime = elapsed; // waktu bertahan sebenarnya
 
     syncState(board, pieces, finalScore, true, survivalTime);
 
@@ -600,7 +595,7 @@ export default function RoomPage() {
     setOppWantRematch(false);
     setRoomStatus('playing');
     setGameStartAt(startAt);
-    setTimeLeft(GAME_DURATION);
+    setTimeLeft(0);
   }
 
   // Watch for both wanting rematch
@@ -630,22 +625,20 @@ export default function RoomPage() {
   const winnerRef = useRef(null);
   const winner = useMemo(() => {
     if (roomStatus !== 'finished') return null;
-    // If game ends by time (both hit 0), compare scores
-    // Otherwise, whoever is still alive wins (longer survival time)
-    const myTime = myGameOver
+    // Pemenang = yang bertahan PALING LAMA (survival time terbesar)
+    // survival_time tersimpan di DB saat handleGameOver dipanggil
+    const myTime  = myGameOver
       ? (gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0)
-      : GAME_DURATION;
-    const oppTime = opponent?.is_game_over
-      ? (opponent.survival_time || 0)
-      : GAME_DURATION;
+      : timeLeft; // kalau masih main, pakai timer sekarang
+    const oppTime = opponent?.survival_time || 0;
 
     if (myTime > oppTime) return 'you';
     if (oppTime > myTime) return 'opponent';
-    // Tiebreak by score
+    // Tiebreak: skor (hanya tiebreaker, bukan penentu utama)
     if (myScore > (opponent?.score || 0)) return 'you';
     if ((opponent?.score || 0) > myScore) return 'opponent';
     return 'draw';
-  }, [roomStatus, myGameOver, opponent, myScore, gameStartAt]);
+  }, [roomStatus, myGameOver, opponent, myScore, gameStartAt, timeLeft]);
 
   useEffect(() => {
     if (winner && !winnerRef.current) {
@@ -723,8 +716,8 @@ export default function RoomPage() {
   const floatPiece = drag !== null && myPieces[drag.idx];
 
   // Timer color
-  const timerColor = timeLeft <= 30 ? '#e84040' : timeLeft <= 60 ? '#f5a623' : '#29c76a';
-  const timerPulse = timeLeft <= 10;
+  const timerColor = timeLeft >= 120 ? '#e84040' : timeLeft >= 60 ? '#f5a623' : '#29c76a';
+  const timerPulse = false; // tidak ada pulse — timer maju terus
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -789,7 +782,7 @@ export default function RoomPage() {
               </div>
               <span className={styles.ssScore}>{(opponent.score || 0).toLocaleString()}</span>
             </div>
-            <div className={styles.ssNote}>⚡ Yang bertahan lebih lama = menang!</div>
+            <div className={styles.ssNote}>⏱ Timer terus naik — bertahan selama mungkin!</div>
           </div>
         )}
 
@@ -921,8 +914,8 @@ export default function RoomPage() {
         {winner && (
           <div className={styles.winnerOverlay}>
             <div className={styles.winnerCard}>
-              {winner === 'you'      && <><div className={styles.winnerEmoji}>🏆</div><div className={styles.winnerTitle}>KAMU MENANG!</div></>}
-              {winner === 'opponent' && <><div className={styles.winnerEmoji}>😢</div><div className={styles.winnerTitle}>KAMU KALAH</div></>}
+              {winner === 'you'      && <><div className={styles.winnerEmoji}>🏆</div><div className={styles.winnerTitle}>KAMU MENANG!</div><div className={styles.winnerSub}>Kamu bertahan lebih lama 💪</div></>}
+              {winner === 'opponent' && <><div className={styles.winnerEmoji}>😢</div><div className={styles.winnerTitle}>KAMU KALAH</div><div className={styles.winnerSub}>Lawan bertahan lebih lama</div></>}
               {winner === 'draw'     && <><div className={styles.winnerEmoji}>🤝</div><div className={styles.winnerTitle}>SERI!</div></>}
               {winner === 'you' && <div className={styles.confetti}>{Array.from({length:16}).map((_,i)=><span key={i} style={{'--i':i}}/>)}</div>}
 
@@ -933,11 +926,8 @@ export default function RoomPage() {
                   <span className={styles.fbName}>👤 {username.current}</span>
                   <span className={styles.fbTime}>⏱ {formatTime(
                     myGameOver
-                      ? Math.min(
-                          gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0,
-                          GAME_DURATION
-                        )
-                      : GAME_DURATION
+                      ? (gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0)
+                      : timeLeft
                   )}</span>
                   <span className={styles.fbScore}>{myScore.toLocaleString()}</span>
                 </div>
@@ -948,7 +938,7 @@ export default function RoomPage() {
                     <span className={styles.fbScore}>{(opponent.score || 0).toLocaleString()}</span>
                   </div>
                 )}
-                <div className={styles.fbRule}>Pemenang = yang bertahan lebih lama ⚡</div>
+                <div className={styles.fbRule}>🏆 Pemenang = yang paling lama bertahan hidup</div>
               </div>
 
               {/* Rematch buttons */}
