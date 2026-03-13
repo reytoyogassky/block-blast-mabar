@@ -5,12 +5,15 @@ import { supabase } from '../../lib/supabase';
 import {
   emptyBoard, make3Pieces, canPlace, placeOnBoard,
   findClears, clearLines, anyPieceFits, calcScore, ROWS, COLS,
+  getDifficultyLevel, DIFFICULTY_LABELS, DIFFICULTY_COLORS,
 } from '../../lib/gameLogic';
 import {
   sfxPickup, sfxDrop, sfxClear, sfxCombo, sfxGameOver, sfxWin, sfxNoPlace,
   startBgMusic, stopBgMusic, setMuted, isMuted,
 } from '../../lib/sounds';
 import Board from '../../components/Board';
+import MusicPlayer from '../../components/MusicPlayer';
+import Leaderboard from '../../components/Leaderboard';
 import PieceCanvas from '../../components/PieceCanvas';
 import styles from '../../styles/Room.module.css';
 
@@ -152,6 +155,11 @@ export default function RoomPage() {
   });
   const [settingsDraft, setSettingsDraft] = useState(settings);
 
+  // ── Music & leaderboard state ──────────────────────────────────────────
+  const [roomMusicUrl, setRoomMusicUrl]       = useState('');
+  const [musicStartedAt, setMusicStartedAt]   = useState(null);  // timestamp sync
+  const [showRoomLeaderboard, setShowRoomLeaderboard] = useState(false);
+
   // ── Rematch state ─────────────────────────────────────────────────────────
   const [wantRematch, setWantRematch]   = useState(false);
   const [oppWantRematch, setOppWantRematch] = useState(false);
@@ -279,6 +287,11 @@ export default function RoomPage() {
       setRoomStatus(prev => prev !== room.status ? room.status : prev);
       setRoomData(room);
       if (room.game_start_at) setGameStartAt(room.game_start_at);
+      // Gunakan compare supaya tidak trigger reload YouTube
+      if (room.music_url !== undefined)
+        setRoomMusicUrl(prev => prev !== (room.music_url || '') ? (room.music_url || '') : prev);
+      if (room.music_started_at !== undefined)
+        setMusicStartedAt(prev => prev !== (room.music_started_at || null) ? (room.music_started_at || null) : prev);
       if (room.status === 'waiting') fetchPlayers();
       if (room.status !== 'waiting') clearInterval(poll);
     }, 3000);
@@ -352,6 +365,8 @@ export default function RoomPage() {
       };
       setSettings(loaded);
       setSettingsDraft(loaded);
+      setRoomMusicUrl(room.music_url || "");
+      setMusicStartedAt(room.music_started_at || null);
     }
     await fetchPlayers();
   }
@@ -431,6 +446,15 @@ export default function RoomPage() {
           });
           setRoomData(r);
           if (r.game_start_at) setGameStartAt(r.game_start_at);
+          // Sync music URL + timestamp ke semua pemain
+          // Pakai functional update + compare string supaya tidak trigger remount iframe
+          // kalau nilainya sama persis
+          if (r.music_url !== undefined) {
+            setRoomMusicUrl(prev => prev !== (r.music_url || '') ? (r.music_url || '') : prev);
+          }
+          if (r.music_started_at !== undefined) {
+            setMusicStartedAt(prev => prev !== (r.music_started_at || null) ? (r.music_started_at || null) : prev);
+          }
         })
       .subscribe();
   }
@@ -478,18 +502,61 @@ export default function RoomPage() {
     router.push('/');
   }
 
-  // ── Broadcast channel for realtime drag sync ──────────────────────────────
+  // ── Music URL + sync timestamp ───────────────────────────────────────────
+  // 1. Update state host sendiri
+  // 2. Broadcast LANGSUNG ke semua client via channel (instant, tanpa tunggu DB)
+  // 3. Simpan ke DB sebagai backup (untuk player yang join belakangan)
+  async function saveMusicUrl(url, startedAt = null) {
+    // Update lokal dulu — host langsung dengar
+    setRoomMusicUrl(url);
+    setMusicStartedAt(startedAt);
+
+    // Broadcast ke semua client sekarang — ini yang bikin real-time
+    broadcastChannel.current?.send({
+      type: 'broadcast',
+      event: 'music',
+      payload: { url, startedAt },
+    });
+
+    // Simpan ke DB — untuk player yang join belakangan / reload
+    await supabase.from('rooms').update({
+      music_url: url,
+      music_started_at: startedAt,
+    }).eq('id', roomId);
+  }
+
+  // ── Broadcast channel — drag sync + music sync ───────────────────────────
   function subscribeToDragBroadcast() {
-    // Use broadcast config — required for Supabase Realtime broadcast to work cross-client
-    const ch = supabase.channel(`drag:${roomId}`, {
+    const ch = supabase.channel(`room-broadcast:${roomId}`, {
       config: { broadcast: { self: false, ack: false } },
     });
     broadcastChannel.current = ch;
+
+    // Event: drag (gerakan blok lawan)
     ch.on('broadcast', { event: 'drag' }, ({ payload }) => {
       if (!payload || payload.pid === playerId.current) return;
       setOppDrag(payload.drag ?? null);
-    }).subscribe((status) => {
-      console.log('[drag-broadcast]', status);
+    });
+
+    // Event: music (host set/hapus/sync musik — instant tanpa refresh)
+    ch.on('broadcast', { event: 'music' }, ({ payload }) => {
+      if (!payload) return;
+      setRoomMusicUrl(prev => prev !== (payload.url || '') ? (payload.url || '') : prev);
+      setMusicStartedAt(prev => prev !== (payload.startedAt || null) ? (payload.startedAt || null) : prev);
+    });
+
+    ch.subscribe(async (status) => {
+      console.log('[room-broadcast]', status);
+      // Saat channel ready, fetch musik terbaru dari DB
+      // (handle kasus: host sudah set musik sebelum client join/channel ready)
+      if (status === 'SUBSCRIBED') {
+        const { data: room } = await supabase
+          .from('rooms').select('music_url, music_started_at').eq('id', roomId).single();
+        if (room) {
+          setRoomMusicUrl(prev => prev !== (room.music_url || '') ? (room.music_url || '') : prev);
+          setMusicStartedAt(prev => prev !== (room.music_started_at || null) ? (room.music_started_at || null) : prev);
+        }
+      }
     });
   }
 
@@ -623,7 +690,7 @@ export default function RoomPage() {
       setTimeout(() => {
         const cb = clearLines(nb, rows, cols);
         // FIX: generate new pieces based on cleared board state
-        const fp = allUsed ? make3Pieces(cb) : np;
+        const fp = allUsed ? make3Pieces(cb, ns) : np;
         setMyBoard(cb); setClearing({ rows: [], cols: [] });
         setMyPieces(fp); setMyScore(ns);
         // FIX: check game over AFTER updating pieces with new board context
@@ -634,7 +701,7 @@ export default function RoomPage() {
     } else {
       setMyBoard(nb);
       // FIX: generate new pieces based on updated board
-      const fp = allUsed ? make3Pieces(nb) : np;
+      const fp = allUsed ? make3Pieces(nb, ns) : np;
       setMyPieces(fp); setMyScore(ns);
       // FIX: check game over against actual next pieces
       const over = !anyPieceFits(nb, fp);
@@ -785,6 +852,22 @@ export default function RoomPage() {
     if (roomStatus === 'playing') winnerRef.current = null;
   }, [roomStatus]);
 
+  // ── Difficulty level (berdasarkan skor) ─────────────────────────────────────
+  const difficultyLevel = useMemo(() => getDifficultyLevel(myScore), [myScore]);
+  const prevDiffLevel   = useRef(0);
+
+  // Efek "LEVEL UP" saat naik difficulty
+  useEffect(() => {
+    if (difficultyLevel > prevDiffLevel.current && prevDiffLevel.current >= 0) {
+      prevDiffLevel.current = difficultyLevel;
+      // Flash warna sesuai level
+      setFlashing(true);
+      setTimeout(() => setFlashing(false), 220);
+    } else {
+      prevDiffLevel.current = difficultyLevel;
+    }
+  }, [difficultyLevel]);
+
   // ── Ghost & display board ─────────────────────────────────────────────────
   const ghostCells = useMemo(() => {
     const s = new Set();
@@ -886,6 +969,16 @@ export default function RoomPage() {
               📊
             </button>
           )}
+
+          {/* Leaderboard room toggle */}
+          <button
+            className={styles.scoreboardBtn}
+            onClick={() => setShowRoomLeaderboard(s => !s)}
+            title="Leaderboard Room"
+            style={showRoomLeaderboard ? { background: '#1a1500', borderColor: '#f5a62355' } : {}}
+          >
+            🏆
+          </button>
 
           {/* Settings button — hanya host saat waiting */}
           {isHost && (
@@ -1010,14 +1103,38 @@ export default function RoomPage() {
           </div>
         )}
 
+        {/* ── Music Player ────────────────────────────────────────────────── */}
+        <MusicPlayer
+          isHost={isHost}
+          roomMusicUrl={roomMusicUrl}
+          musicStartedAt={musicStartedAt}
+          onSaveUrl={saveMusicUrl}
+        />
+
+        {/* ── Room Leaderboard ─────────────────────────────────────────────── */}
+        {showRoomLeaderboard && (
+          <Leaderboard compact roomId={roomId} />
+        )}
+
         <div className={styles.arena}>
           {/* MY BOARD */}
           <div className={styles.playerSection}>
             <div className={styles.playerHeader}>
               <span className={styles.playerName}>{username.current || 'Kamu'}</span>
-              <span className={`${styles.scoreVal} ${bumping ? styles.bump : ''}`}>
-                {myScore.toLocaleString()}
-              </span>
+              <div className={styles.scoreBlock}>
+                <span className={`${styles.scoreVal} ${bumping ? styles.bump : ''}`}>
+                  {myScore.toLocaleString()}
+                </span>
+                {roomStatus === 'playing' && (
+                  <span
+                    className={`${styles.diffBadge} ${difficultyLevel >= 3 ? styles.diffPulse : ''}`}
+                    style={{ background: DIFFICULTY_COLORS[difficultyLevel] + '22', color: DIFFICULTY_COLORS[difficultyLevel], borderColor: DIFFICULTY_COLORS[difficultyLevel] + '55' }}
+                  >
+                    {difficultyLevel === 0 ? '🟢' : difficultyLevel === 1 ? '🟡' : difficultyLevel === 2 ? '🟠' : difficultyLevel === 3 ? '🔴' : '💀'}
+                    {' '}{DIFFICULTY_LABELS[difficultyLevel]}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className={styles.boardWrap} ref={boardRef}>

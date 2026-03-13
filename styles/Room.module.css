@@ -797,3 +797,32 @@
   margin-top: 2px;
   margin-bottom: 2px;
 }
+/* ── Difficulty Badge ────────────────────────────────────────── */
+.scoreBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.diffBadge {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: background 0.5s, color 0.5s, border-color 0.5s;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.diffPulse {
+  animation: diffBeat 0.8s ease infinite alternate;
+}
+
+@keyframes diffBeat {
+  from { opacity: 0.75; transform: scale(1); }
+  to   { opacity: 1;    transform: scale(1.06); }
+}

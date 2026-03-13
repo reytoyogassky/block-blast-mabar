@@ -1,0 +1,237 @@
+.wrap {
+  width: 100%;
+  max-width: 940px;
+  background: #0a0a16;
+  border: 1.5px solid #1e1e35;
+  border-radius: 14px;
+  overflow: hidden;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Top bar ─────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #0e0e1c;
+  border-bottom: 1px solid #1a1a2e;
+}
+
+.barTitle {
+  font-size: 11px;
+  font-weight: 900;
+  color: #555;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.typeTag {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: #1a1a2e;
+  color: #f5a623;
+  border: 1px solid #f5a62333;
+  text-transform: uppercase;
+}
+
+.barActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.editBtn,
+.collapseBtn {
+  background: transparent;
+  border: 1.5px solid #22223a;
+  border-radius: 6px;
+  color: #555;
+  font-size: 12px;
+  padding: 3px 8px;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.editBtn:hover    { border-color: #f5a623; color: #f5a623; }
+.collapseBtn:hover { border-color: #555; color: #aaa; }
+
+/* ── Input form ──────────────────────────────────────── */
+.inputWrap {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #0c0c1a;
+  border-bottom: 1px solid #1a1a2e;
+  animation: slideDown 0.15s ease;
+}
+
+.urlInput {
+  background: #141424;
+  border: 1.5px solid #22223a;
+  border-radius: 8px;
+  color: #eee;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.urlInput:focus { border-color: #f5a623; }
+.urlInput::placeholder { color: #2a2a45; }
+
+.inputHint {
+  font-size: 9px;
+  color: #2a2a45;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.inputBtns {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.saveBtn {
+  background: #29c76a;
+  color: #0a0a14;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.saveBtn:hover { filter: brightness(1.12); }
+
+.clearBtn {
+  background: transparent;
+  border: 1.5px solid #e8404044;
+  color: #e84040;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.clearBtn:hover { background: #e8404018; }
+
+.cancelBtn {
+  background: transparent;
+  border: 1.5px solid #22223a;
+  color: #555;
+  border-radius: 7px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cancelBtn:hover { border-color: #555; color: #aaa; }
+
+/* ── Player iframe area ───────────────────────────────── */
+.playerWrap {
+  width: 100%;
+  background: #06060f;
+}
+
+.iframe {
+  width: 100%;
+  height: 200px;
+  border: none;
+  display: block;
+}
+
+.iframeSpotify {
+  width: 100%;
+  height: 152px; /* compact Spotify embed */
+  border: none;
+  display: block;
+  border-radius: 0 0 12px 12px;
+}
+
+/* ── Empty / error states ─────────────────────────────── */
+.empty {
+  padding: 12px 14px;
+  font-size: 10px;
+  color: #2a2a45;
+  font-weight: 700;
+  text-align: center;
+}
+
+.invalid {
+  padding: 8px 14px;
+  font-size: 10px;
+  color: #e84040;
+  font-weight: 700;
+  background: #1a0505;
+  border-top: 1px solid #e8404033;
+}
+
+@media (max-width: 639px) {
+  .iframe { height: 160px; }
+  .iframeSpotify { height: 130px; }
+}
+
+/* ── Sync UI ─────────────────────────────────────────────── */
+.syncBtn {
+  background: #0d2a1a;
+  border: 1.5px solid #29c76a44;
+  border-radius: 6px;
+  color: #29c76a;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 3px 10px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.syncBtn:hover { background: #143d23; border-color: #29c76a88; }
+
+.syncFlash {
+  animation: syncPulse 0.9s ease;
+}
+@keyframes syncPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(41,199,106,0.6); }
+  50%  { box-shadow: 0 0 0 12px rgba(41,199,106,0); }
+  100% { box-shadow: 0 0 0 0 rgba(41,199,106,0); }
+}
+
+.syncInfo {
+  padding: 5px 14px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #29c76a88;
+  background: #06120a;
+  border-bottom: 1px solid #29c76a22;
+  letter-spacing: 0.3px;
+}
+
+.posTag {
+  font-size: 9px;
+  font-weight: 700;
+  color: #29c76a88;
+  background: #06120a;
+  border: 1px solid #29c76a22;
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.3px;
+  margin-left: 4px;
+}
