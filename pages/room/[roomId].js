@@ -141,6 +141,17 @@ export default function RoomPage() {
   // ── Duel scoreboard ───────────────────────────────────────────────────────
   const [showScoreboard, setShowScoreboard] = useState(false);
 
+  // ── Room settings state ───────────────────────────────────────────────────
+  const [isHost, setIsHost]             = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings]         = useState({
+    roomName:      '',
+    pointTarget:   0,    // 0 = tidak ada target
+    timerDuration: 0,    // 0 = tidak ada batas waktu (timer maju bebas)
+    maxPlayers:    2,    // default 2 pemain
+  });
+  const [settingsDraft, setSettingsDraft] = useState(settings);
+
   // ── Rematch state ─────────────────────────────────────────────────────────
   const [wantRematch, setWantRematch]   = useState(false);
   const [oppWantRematch, setOppWantRematch] = useState(false);
@@ -163,6 +174,7 @@ export default function RoomPage() {
   const playerId      = useRef('');
   const username      = useRef('');
   const musicStarted  = useRef(false);
+  const bgAudioRef    = useRef(null);   // HTMLAudioElement untuk MP3 background
 
   const boardStateRef  = useRef(myBoard);
   const piecesStateRef = useRef(myPieces);
@@ -174,10 +186,55 @@ export default function RoomPage() {
   gameOverRef.current    = myGameOver;
 
   function ensureMusic() {
-    if (!musicStarted.current && !isMuted()) {
-      musicStarted.current = true;
+    if (musicStarted.current || isMuted()) return;
+    musicStarted.current = true;
+    // Coba MP3 dari Supabase Storage dulu, fallback ke Web Audio chiptune
+    tryPlayMp3();
+  }
+
+  async function tryPlayMp3() {
+    try {
+      const { data } = await supabase.storage
+        .from('music')
+        .list('', { limit: 10 });
+      const mp3 = data?.find(f => f.name.match(/\.mp3$/i));
+      if (!mp3) { startBgMusic(); return; }
+
+      const { data: urlData } = supabase.storage
+        .from('music')
+        .getPublicUrl(mp3.name);
+      if (!urlData?.publicUrl) { startBgMusic(); return; }
+
+      const audio = new Audio(urlData.publicUrl);
+      audio.loop   = true;
+      audio.volume = 0.35;
+      bgAudioRef.current = audio;
+      audio.play().catch(() => {
+        bgAudioRef.current = null;
+        startBgMusic();
+      });
+    } catch {
       startBgMusic();
     }
+  }
+
+  function stopAllMusic() {
+    if (bgAudioRef.current) {
+      bgAudioRef.current.pause();
+      bgAudioRef.current = null;
+      musicStarted.current = false;
+    }
+    stopBgMusic();
+  }
+
+  function toggleMuteAll(next) {
+    setMutedUI(next);
+    setMuted(next);
+    if (bgAudioRef.current) {
+      bgAudioRef.current.muted = next;
+      if (!next && bgAudioRef.current.paused) bgAudioRef.current.play().catch(() => {});
+    }
+    if (!next) musicStarted.current = false;
   }
 
   // ── Timer logic ───────────────────────────────────────────────────────────
@@ -185,9 +242,19 @@ export default function RoomPage() {
     if (roomStatus !== 'playing' || !gameStartAt) return;
 
     function tick() {
-      // Timer maju — hitung elapsed sejak game mulai
       const elapsed = Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000);
-      setTimeLeft(elapsed);
+      const dur = settings.timerDuration;
+      if (dur > 0) {
+        // Mode countdown — timer mundur
+        const remaining = Math.max(0, dur - elapsed);
+        setTimeLeft(remaining);
+        if (remaining <= 0 && !gameOverRef.current) {
+          handleGameOver(scoreRef.current, boardStateRef.current, piecesStateRef.current, true);
+        }
+      } else {
+        // Mode bebas — timer maju
+        setTimeLeft(elapsed);
+      }
     }
 
     tick();
@@ -219,7 +286,7 @@ export default function RoomPage() {
     return () => {
       clearInterval(poll);
       clearInterval(timerRef.current);
-      stopBgMusic();
+      stopAllMusic();
       supabase.removeAllChannels();
     };
   }, [isReady, roomId]);
@@ -273,6 +340,18 @@ export default function RoomPage() {
       setRoomStatus(room.status);
       setRoomData(room);
       if (room.game_start_at) setGameStartAt(room.game_start_at);
+      // Cek apakah kita host
+      const myId = playerId.current;
+      setIsHost(room.host_id === myId);
+      // Load settings dari DB
+      const loaded = {
+        roomName:      room.room_name      || '',
+        pointTarget:   room.point_target   || 0,
+        timerDuration: room.game_duration  || 0,
+        maxPlayers:    room.max_players    || 2,
+      };
+      setSettings(loaded);
+      setSettingsDraft(loaded);
     }
     await fetchPlayers();
   }
@@ -286,7 +365,8 @@ export default function RoomPage() {
       setOpponent(opp);
       setOppWantRematch(opp.ready_for_rematch || false);
     }
-    if (data.length >= 2) {
+    const curMax = roomData?.max_players || settings.maxPlayers || 2;
+    if (data.length >= curMax) {
       const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
       if (room?.status === 'waiting') {
         // Only host starts the game — but both players set their local status
@@ -320,7 +400,35 @@ export default function RoomPage() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
         payload => {
           const r = payload.new;
-          setRoomStatus(r.status);
+
+          // Update settings jika berubah
+          {
+            const updated = {
+              roomName:      r.room_name      || '',
+              pointTarget:   r.point_target   || 0,
+              timerDuration: r.game_duration  || 0,
+              maxPlayers:    r.max_players    || 2,
+            };
+            setSettings(updated);
+            setSettingsDraft(prev =>
+              showSettings ? prev : updated  // jangan override kalau host lagi edit
+            );
+          }
+
+          // Detect host kick — room jadi 'closed'
+          if (r.status === 'closed') {
+            alert('Host telah menutup room.');
+            router.push('/');
+            return;
+          }
+
+          // Deteksi rematch
+          setRoomStatus(prev => {
+            if (prev === 'finished' && r.status === 'playing') {
+              applyRematchReset(r.game_start_at || new Date().toISOString());
+            }
+            return r.status;
+          });
           setRoomData(r);
           if (r.game_start_at) setGameStartAt(r.game_start_at);
         })
@@ -348,6 +456,26 @@ export default function RoomPage() {
           }
         })
       .subscribe();
+  }
+
+  // ── Host: simpan settings ke DB ──────────────────────────────────────────
+  async function saveSettings() {
+    const d = settingsDraft;
+    await supabase.from('rooms').update({
+      room_name:     d.roomName,
+      point_target:  d.pointTarget,
+      game_duration: d.timerDuration,
+      max_players:   d.maxPlayers,
+    }).eq('id', roomId);
+    setSettings(d);
+    setShowSettings(false);
+  }
+
+  // ── Host: tutup room → semua pemain keluar ────────────────────────────────
+  async function hostCloseRoom() {
+    if (!confirm('Tutup room? Semua pemain akan keluar.')) return;
+    await supabase.from('rooms').update({ status: 'closed' }).eq('id', roomId);
+    router.push('/');
   }
 
   // ── Broadcast channel for realtime drag sync ──────────────────────────────
@@ -549,43 +677,41 @@ export default function RoomPage() {
   // ── Rematch ───────────────────────────────────────────────────────────────
   async function requestRematch() {
     setWantRematch(true);
-    // Try to set ready_for_rematch (new column, may not exist in old schema)
-    await supabase.from('players').update({ ready_for_rematch: true })
-      .eq('room_id', roomId).eq('player_id', playerId.current).then(({ error }) => {
-        if (error) console.warn('ready_for_rematch column missing, run migration SQL');
-      });
-
-    // If both want rematch, reset the game
-    if (oppWantRematch) {
-      await startRematch();
-    }
+    await supabase.from('players')
+      .update({ ready_for_rematch: true })
+      .eq('room_id', roomId).eq('player_id', playerId.current);
+    // startRematch akan dipanggil oleh useEffect di bawah (hanya host)
   }
 
   async function startRematch() {
-    const newBoard = emptyBoard();
-    const newPieces = make3Pieces(null);
     const startAt = new Date().toISOString();
 
-    // Reset both players
+    // Host: reset SEMUA players di room (bukan hanya diri sendiri)
+    // Ini yang bikin non-host tidak stuck — state mereka di-reset dari DB
     await supabase.from('players').update({
-      board: newBoard, pieces: newPieces, score: 0,
-      is_game_over: false, updated_at: new Date().toISOString(),
-    }).eq('room_id', roomId).eq('player_id', playerId.current);
+      board: emptyBoard(), pieces: make3Pieces(null), score: 0,
+      is_game_over: false, ready_for_rematch: false,
+      survival_time: 0, updated_at: new Date().toISOString(),
+    }).eq('room_id', roomId);  // ← tidak filter player_id, reset semua
 
-    // Reset room
+    // Reset room — ini yang mentrigger subscribeToRoom di non-host
     const { data: room } = await supabase.from('rooms').select('round').eq('id', roomId).single();
     await supabase.from('rooms').update({
       status: 'playing',
       game_start_at: startAt,
       round: (room?.round || 1) + 1,
     }).eq('id', roomId).then(({ error }) => {
-      if (error) {
-        // Old schema without game_start_at/round — update just status
-        supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
-      }
+      if (error) supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
     });
 
-    // Reset local state
+    // Reset local state host
+    applyRematchReset(startAt);
+  }
+
+  // Dipanggil oleh host (langsung) dan non-host (via room subscription)
+  function applyRematchReset(startAt) {
+    const newBoard  = emptyBoard();
+    const newPieces = make3Pieces(null);
     setMyBoard(newBoard);
     setMyPieces(newPieces);
     setMyScore(0);
@@ -593,20 +719,19 @@ export default function RoomPage() {
     gameOverRef.current = false;
     setWantRematch(false);
     setOppWantRematch(false);
+    setOppDrag(null);
     setRoomStatus('playing');
     setGameStartAt(startAt);
-    setTimeLeft(0);
+    setTimeLeft(settings.timerDuration > 0 ? settings.timerDuration : 0);
   }
 
-  // Watch for both wanting rematch
+  // Watch for both wanting rematch — hanya host yang eksekusi
   useEffect(() => {
-    if (wantRematch && oppWantRematch && roomStatus === 'finished') {
-      // Only host starts the rematch to avoid race condition
-      supabase.from('rooms').select('host_id').eq('id', roomId).single().then(({ data }) => {
-        if (data?.host_id === playerId.current) startRematch();
-      });
-    }
-  }, [wantRematch, oppWantRematch]);
+    if (!wantRematch || !oppWantRematch || roomStatus !== 'finished') return;
+    supabase.from('rooms').select('host_id').eq('id', roomId).single().then(({ data }) => {
+      if (data?.host_id === playerId.current) startRematch();
+    });
+  }, [wantRematch, oppWantRematch, roomStatus]);
 
   useEffect(() => {
     window.addEventListener('mousemove', moveDrag);
@@ -625,20 +750,28 @@ export default function RoomPage() {
   const winnerRef = useRef(null);
   const winner = useMemo(() => {
     if (roomStatus !== 'finished') return null;
-    // Pemenang = yang bertahan PALING LAMA (survival time terbesar)
-    // survival_time tersimpan di DB saat handleGameOver dipanggil
-    const myTime  = myGameOver
-      ? (gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0)
-      : timeLeft; // kalau masih main, pakai timer sekarang
-    const oppTime = opponent?.survival_time || 0;
-
-    if (myTime > oppTime) return 'you';
-    if (oppTime > myTime) return 'opponent';
-    // Tiebreak: skor (hanya tiebreaker, bukan penentu utama)
+    // Pemenang = skor terbesar
     if (myScore > (opponent?.score || 0)) return 'you';
     if ((opponent?.score || 0) > myScore) return 'opponent';
+    // Tiebreak: waktu bertahan terlama
+    const myTime  = myGameOver
+      ? (gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0)
+      : timeLeft;
+    const oppTime = opponent?.survival_time || 0;
+    if (myTime > oppTime) return 'you';
+    if (oppTime > myTime) return 'opponent';
     return 'draw';
   }, [roomStatus, myGameOver, opponent, myScore, gameStartAt, timeLeft]);
+
+  // Cek apakah ada yang sudah capai point target
+  useEffect(() => {
+    if (roomStatus !== 'playing') return;
+    const target = settings.pointTarget;
+    if (!target || target <= 0) return;
+    if (myScore >= target && !myGameOver) {
+      handleGameOver(myScore, boardStateRef.current, piecesStateRef.current);
+    }
+  }, [myScore, settings.pointTarget, roomStatus]);
 
   useEffect(() => {
     if (winner && !winnerRef.current) {
@@ -707,22 +840,22 @@ export default function RoomPage() {
   }
 
   function toggleMute() {
-    const next = !mutedUI;
-    setMutedUI(next);
-    setMuted(next);
-    if (!next) musicStarted.current = false;
+    toggleMuteAll(!mutedUI);
   }
 
   const floatPiece = drag !== null && myPieces[drag.idx];
 
   // Timer color
-  const timerColor = timeLeft >= 120 ? '#e84040' : timeLeft >= 60 ? '#f5a623' : '#29c76a';
-  const timerPulse = false; // tidak ada pulse — timer maju terus
+  const isCountdown = settings.timerDuration > 0;
+  const timerColor = isCountdown
+    ? (timeLeft <= 30 ? '#e84040' : timeLeft <= 60 ? '#f5a623' : '#29c76a')   // countdown: merah kalau mau habis
+    : (timeLeft >= 120 ? '#f5a623' : timeLeft >= 60 ? '#29c76a' : '#29c76a'); // maju: kuning setelah 2 menit
+  const timerPulse = isCountdown && timeLeft <= 10;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <Head><title>Block Blast Mabar — {roomId}</title></Head>
+      <Head><title>{settings.roomName ? settings.roomName + " — " : ""}Block Blast Mabar — {roomId}</title></Head>
 
       {flashing && <div className={styles.flashOverlay} />}
 
@@ -754,10 +887,101 @@ export default function RoomPage() {
             </button>
           )}
 
+          {/* Settings button — hanya host saat waiting */}
+          {isHost && (
+            <button className={styles.settingsBtn} onClick={() => setShowSettings(s => !s)} title="Pengaturan Room">
+              ⚙️
+            </button>
+          )}
+
+          {/* Host close room button */}
+          {isHost && roomStatus !== 'finished' && (
+            <button className={styles.closeRoomBtn} onClick={hostCloseRoom} title="Tutup Room">
+              ✕ Tutup Room
+            </button>
+          )}
+
           <button className={styles.muteBtn} onClick={toggleMute} title={mutedUI ? 'Unmute' : 'Mute'}>
             {mutedUI ? '🔇' : '🔊'}
           </button>
         </div>
+
+        {/* ── Settings panel (host only, waiting) ── */}
+        {showSettings && isHost && (
+          <div className={styles.settingsPanel}>
+            <div className={styles.settingsTitle}>⚙️ Pengaturan Room</div>
+
+            <div className={styles.settingsRow}>
+              <label className={styles.settingsLabel}>Nama Room</label>
+              <input
+                className={styles.settingsInput}
+                placeholder="Opsional..."
+                value={settingsDraft.roomName}
+                onChange={e => setSettingsDraft(d => ({ ...d, roomName: e.target.value }))}
+                maxLength={24}
+              />
+            </div>
+
+            <div className={styles.settingsRow}>
+              <label className={styles.settingsLabel}>Timer</label>
+              <select
+                className={styles.settingsInput}
+                value={settingsDraft.timerDuration}
+                onChange={e => setSettingsDraft(d => ({ ...d, timerDuration: Number(e.target.value) }))}
+              >
+                <option value={0}>♾️ Bebas (timer maju)</option>
+                <option value={60}>⏱ 1 menit</option>
+                <option value={120}>⏱ 2 menit</option>
+                <option value={180}>⏱ 3 menit</option>
+                <option value={300}>⏱ 5 menit</option>
+                <option value={600}>⏱ 10 menit</option>
+              </select>
+            </div>
+
+            <div className={styles.settingsRow}>
+              <label className={styles.settingsLabel}>Target Poin</label>
+              <select
+                className={styles.settingsInput}
+                value={settingsDraft.pointTarget}
+                onChange={e => setSettingsDraft(d => ({ ...d, pointTarget: Number(e.target.value) }))}
+              >
+                <option value={0}>♾️ Tidak ada batas</option>
+                <option value={500}>🎯 500 poin</option>
+                <option value={1000}>🎯 1.000 poin</option>
+                <option value={2000}>🎯 2.000 poin</option>
+                <option value={5000}>🎯 5.000 poin</option>
+              </select>
+            </div>
+
+            <div className={styles.settingsRow}>
+              <label className={styles.settingsLabel}>Maks Pemain</label>
+              <select
+                className={styles.settingsInput}
+                value={settingsDraft.maxPlayers}
+                onChange={e => setSettingsDraft(d => ({ ...d, maxPlayers: Number(e.target.value) }))}
+              >
+                <option value={2}>👥 2 pemain</option>
+                <option value={3}>👥 3 pemain</option>
+                <option value={4}>👥 4 pemain</option>
+              </select>
+            </div>
+
+            <div className={styles.settingsBtns}>
+              <button className={styles.settingsSave} onClick={saveSettings}>💾 Simpan</button>
+              <button className={styles.settingsCancel} onClick={() => { setSettingsDraft(settings); setShowSettings(false); }}>Batal</button>
+            </div>
+          </div>
+        )}
+
+        {/* Settings info bar — tampil ke semua saat ada setting aktif */}
+        {roomStatus === 'playing' && (settings.roomName || settings.pointTarget > 0 || settings.timerDuration > 0) && (
+          <div className={styles.settingsBar}>
+            {settings.roomName   && <span>🏠 {settings.roomName}</span>}
+            {settings.timerDuration > 0 && <span>⏱ {Math.floor(settings.timerDuration/60)}m countdown</span>}
+            {settings.pointTarget > 0 && <span>🎯 Target: {settings.pointTarget.toLocaleString()} poin</span>}
+            {settings.maxPlayers > 2  && <span>👥 Maks {settings.maxPlayers} pemain</span>}
+          </div>
+        )}
 
         {/* Inline scoreboard strip */}
         {showScoreboard && roomStatus === 'playing' && opponent && (
@@ -782,7 +1006,7 @@ export default function RoomPage() {
               </div>
               <span className={styles.ssScore}>{(opponent.score || 0).toLocaleString()}</span>
             </div>
-            <div className={styles.ssNote}>⏱ Timer terus naik — bertahan selama mungkin!</div>
+            <div className={styles.ssNote}>🏆 Skor terbesar menang · timer terus naik!</div>
           </div>
         )}
 
@@ -914,8 +1138,8 @@ export default function RoomPage() {
         {winner && (
           <div className={styles.winnerOverlay}>
             <div className={styles.winnerCard}>
-              {winner === 'you'      && <><div className={styles.winnerEmoji}>🏆</div><div className={styles.winnerTitle}>KAMU MENANG!</div><div className={styles.winnerSub}>Kamu bertahan lebih lama 💪</div></>}
-              {winner === 'opponent' && <><div className={styles.winnerEmoji}>😢</div><div className={styles.winnerTitle}>KAMU KALAH</div><div className={styles.winnerSub}>Lawan bertahan lebih lama</div></>}
+              {winner === 'you'      && <><div className={styles.winnerEmoji}>🏆</div><div className={styles.winnerTitle}>KAMU MENANG!</div><div className={styles.winnerSub}>Skor kamu lebih tinggi! 💪</div></>}
+              {winner === 'opponent' && <><div className={styles.winnerEmoji}>😢</div><div className={styles.winnerTitle}>KAMU KALAH</div><div className={styles.winnerSub}>Skor lawan lebih tinggi</div></>}
               {winner === 'draw'     && <><div className={styles.winnerEmoji}>🤝</div><div className={styles.winnerTitle}>SERI!</div></>}
               {winner === 'you' && <div className={styles.confetti}>{Array.from({length:16}).map((_,i)=><span key={i} style={{'--i':i}}/>)}</div>}
 
@@ -938,7 +1162,7 @@ export default function RoomPage() {
                     <span className={styles.fbScore}>{(opponent.score || 0).toLocaleString()}</span>
                   </div>
                 )}
-                <div className={styles.fbRule}>🏆 Pemenang = yang paling lama bertahan hidup</div>
+                <div className={styles.fbRule}>🏆 Pemenang = skor terbesar · tiebreak waktu</div>
               </div>
 
               {/* Rematch buttons */}

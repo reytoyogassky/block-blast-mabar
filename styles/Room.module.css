@@ -658,3 +658,142 @@
   from { opacity: 0.6; }
   to   { opacity: 1; }
 }
+/* ── Settings Panel ─────────────────────────────────────────── */
+.settingsBtn {
+  background: #0e0e1c;
+  border: 1.5px solid #22223a;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 16px;
+  line-height: 1;
+  transition: background 0.15s, transform 0.1s;
+}
+.settingsBtn:hover { background: #1c1c30; transform: scale(1.1); }
+
+.closeRoomBtn {
+  background: transparent;
+  border: 1.5px solid #e8404044;
+  color: #e84040;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.closeRoomBtn:hover { background: #e8404018; border-color: #e84040; }
+
+.settingsPanel {
+  width: 100%;
+  max-width: 940px;
+  background: #0e0e1c;
+  border: 1.5px solid #2e2e4a;
+  border-radius: 14px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: slideDown 0.2s ease;
+}
+
+.settingsTitle {
+  font-size: 12px;
+  font-weight: 900;
+  color: #f5a623;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.settingsRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settingsLabel {
+  font-size: 11px;
+  font-weight: 800;
+  color: #888;
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.settingsHint {
+  font-size: 10px;
+  color: #3a3a60;
+  font-weight: 700;
+}
+
+.settingsInput {
+  flex: 1;
+  min-width: 120px;
+  background: #141424;
+  border: 1.5px solid #22223a;
+  border-radius: 8px;
+  color: #eee;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.settingsInput:focus { border-color: #f5a623; }
+
+.settingsBtns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.settingsSave {
+  background: #f5a623;
+  color: #0a0a14;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 18px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  transition: filter 0.15s;
+}
+.settingsSave:hover { filter: brightness(1.12); }
+
+.settingsCancel {
+  background: transparent;
+  border: 1.5px solid #22223a;
+  color: #666;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  transition: border-color 0.15s, color 0.15s;
+}
+.settingsCancel:hover { border-color: #555; color: #aaa; }
+
+/* Settings info bar during game */
+.settingsBar {
+  width: 100%;
+  max-width: 940px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 6px 14px;
+  background: #0a0a16;
+  border: 1px solid #1e1e35;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #555;
+  letter-spacing: 0.5px;
+}
+.settingsBar span { color: #f5a62388; }
+
+/* winnerSub */
+.winnerSub {
+  font-size: 13px;
+  color: rgba(255,255,255,0.55);
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
