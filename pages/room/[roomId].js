@@ -14,7 +14,7 @@ import Board from '../../components/Board';
 import PieceCanvas from '../../components/PieceCanvas';
 import styles from '../../styles/Room.module.css';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const GAME_DURATION = 180; // 3 menit default
 
 function useWindowWidth() {
   const [w, setW] = useState(typeof window !== 'undefined' ? window.innerWidth : 800);
@@ -32,7 +32,13 @@ function getPlayerId() {
   return id;
 }
 
-// Particle system — lightweight canvas-based burst
+function formatTime(secs) {
+  const s = Math.max(0, secs);
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}:${ss.toString().padStart(2, '0')}`;
+}
+
 function spawnParticles(canvasEl, cells, cellSize, gap, pad, color) {
   if (!canvasEl) return;
   const ctx = canvasEl.getContext('2d');
@@ -64,7 +70,7 @@ function spawnParticles(canvasEl, cells, cellSize, gap, pad, color) {
       if (p.life <= 0) return;
       alive = true;
       p.x += p.vx; p.y += p.vy;
-      p.vy += 0.15; // gravity
+      p.vy += 0.15;
       p.life -= p.decay;
       ctx.globalAlpha = Math.max(0, p.life);
       ctx.fillStyle = p.color;
@@ -79,8 +85,6 @@ function spawnParticles(canvasEl, cells, cellSize, gap, pad, color) {
   frame = requestAnimationFrame(draw);
   return () => cancelAnimationFrame(frame);
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function RoomPage() {
   const router = useRouter();
@@ -111,7 +115,21 @@ export default function RoomPage() {
   const [opponent, setOpponent]     = useState(null);
   const [roomStatus, setRoomStatus] = useState('waiting');
   const [players, setPlayers]       = useState([]);
+  const [roomData, setRoomData]     = useState(null);
 
+  // ── Timer state ───────────────────────────────────────────────────────────
+  const [timeLeft, setTimeLeft]     = useState(GAME_DURATION);
+  const [gameStartAt, setGameStartAt] = useState(null);
+  const timerRef                    = useRef(null);
+
+  // ── Duel scoreboard ───────────────────────────────────────────────────────
+  const [showScoreboard, setShowScoreboard] = useState(false);
+
+  // ── Rematch state ─────────────────────────────────────────────────────────
+  const [wantRematch, setWantRematch]   = useState(false);
+  const [oppWantRematch, setOppWantRematch] = useState(false);
+
+  // ── Drag/visual state ─────────────────────────────────────────────────────
   const [drag, setDrag]       = useState(null);
   const [snap, setSnap]       = useState(null);
   const [clearing, setClearing] = useState({ rows: [], cols: [] });
@@ -119,15 +137,13 @@ export default function RoomPage() {
   const [comboKey, setComboKey] = useState(0);
   const [bumping, setBumping] = useState(false);
   const [copied, setCopied]   = useState(false);
-
-  // ── Visual effect state ───────────────────────────────────────────────────
-  const [shaking, setShaking]   = useState(false);   // screen shake
-  const [flashing, setFlashing] = useState(false);   // white flash on big combo
-  const [mutedUI, setMutedUI]   = useState(false);   // mute button state
+  const [shaking, setShaking]   = useState(false);
+  const [flashing, setFlashing] = useState(false);
+  const [mutedUI, setMutedUI]   = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const boardRef      = useRef(null);
-  const particleRef   = useRef(null);  // canvas overlay for particles
+  const particleRef   = useRef(null);
   const playerId      = useRef('');
   const username      = useRef('');
   const musicStarted  = useRef(false);
@@ -141,13 +157,32 @@ export default function RoomPage() {
   scoreRef.current       = myScore;
   gameOverRef.current    = myGameOver;
 
-  // ── Start music on first real interaction ─────────────────────────────────
   function ensureMusic() {
     if (!musicStarted.current && !isMuted()) {
       musicStarted.current = true;
       startBgMusic();
     }
   }
+
+  // ── Timer logic ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (roomStatus !== 'playing' || !gameStartAt) return;
+
+    function tick() {
+      const elapsed = Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000);
+      const remaining = Math.max(0, GAME_DURATION - elapsed);
+      setTimeLeft(remaining);
+
+      if (remaining <= 0 && !gameOverRef.current) {
+        // Time's up — trigger game over for this player
+        handleGameOver(scoreRef.current, boardStateRef.current, piecesStateRef.current, true);
+      }
+    }
+
+    tick();
+    timerRef.current = setInterval(tick, 500);
+    return () => clearInterval(timerRef.current);
+  }, [roomStatus, gameStartAt]);
 
   // ── INIT ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -160,21 +195,23 @@ export default function RoomPage() {
     subscribeToPlayers();
 
     const poll = setInterval(async () => {
-      const { data: room } = await supabase.from('rooms').select('status').eq('id', roomId).single();
+      const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
       if (!room) return;
       setRoomStatus(prev => prev !== room.status ? room.status : prev);
+      setRoomData(room);
+      if (room.game_start_at) setGameStartAt(room.game_start_at);
       if (room.status === 'waiting') fetchPlayers();
       if (room.status !== 'waiting') clearInterval(poll);
     }, 3000);
 
     return () => {
       clearInterval(poll);
+      clearInterval(timerRef.current);
       stopBgMusic();
       supabase.removeAllChannels();
     };
   }, [roomId]);
 
-  // Resize particle canvas to match board
   useEffect(() => {
     if (!boardRef.current || !particleRef.current) return;
     const rect = boardRef.current.getBoundingClientRect();
@@ -183,15 +220,20 @@ export default function RoomPage() {
   }, [cellSize]);
 
   async function joinRoom() {
-    const pieces = make3Pieces();
+    const pieces = make3Pieces(null);
     setMyPieces(pieces);
     await supabase.from('players').upsert({
       room_id: roomId, player_id: playerId.current,
       username: username.current, board: emptyBoard(),
       pieces, score: 0, is_game_over: false,
+      survival_time: 0, ready_for_rematch: false,
     }, { onConflict: 'room_id,player_id' });
-    const { data: room } = await supabase.from('rooms').select('status').eq('id', roomId).single();
-    if (room) setRoomStatus(room.status);
+    const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
+    if (room) {
+      setRoomStatus(room.status);
+      setRoomData(room);
+      if (room.game_start_at) setGameStartAt(room.game_start_at);
+    }
     await fetchPlayers();
   }
 
@@ -200,21 +242,36 @@ export default function RoomPage() {
     if (!data) return;
     setPlayers(data);
     const opp = data.find(p => p.player_id !== playerId.current);
-    if (opp) setOpponent(opp);
+    if (opp) {
+      setOpponent(opp);
+      setOppWantRematch(opp.ready_for_rematch || false);
+    }
     if (data.length >= 2) {
-      const { data: room } = await supabase.from('rooms').select('status, host_id').eq('id', roomId).single();
+      const { data: room } = await supabase.from('rooms').select('*').eq('id', roomId).single();
       if (room?.status === 'waiting') {
-        if (room.host_id === playerId.current)
-          await supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
+        if (room.host_id === playerId.current) {
+          const startAt = new Date().toISOString();
+          await supabase.from('rooms').update({ status: 'playing', game_start_at: startAt }).eq('id', roomId);
+          setGameStartAt(startAt);
+        }
         setRoomStatus('playing');
-      } else if (room?.status) setRoomStatus(room.status);
+      } else if (room) {
+        setRoomStatus(room.status);
+        setRoomData(room);
+        if (room.game_start_at) setGameStartAt(room.game_start_at);
+      }
     }
   }
 
   function subscribeToRoom() {
     supabase.channel(`room-${roomId}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` },
-        payload => setRoomStatus(payload.new.status))
+        payload => {
+          const r = payload.new;
+          setRoomStatus(r.status);
+          setRoomData(r);
+          if (r.game_start_at) setGameStartAt(r.game_start_at);
+        })
       .subscribe();
   }
 
@@ -227,18 +284,22 @@ export default function RoomPage() {
           const changed = payload.new;
           if (!changed || changed.player_id === playerId.current) return;
           setOpponent(changed);
+          setOppWantRematch(changed.ready_for_rematch || false);
         })
       .subscribe();
   }
 
   // ── Supabase sync ─────────────────────────────────────────────────────────
   const syncDebounce = useRef(null);
-  function syncState(board, pieces, score, isGameOver) {
+  function syncState(board, pieces, score, isGameOver, survivalTime = null) {
     clearTimeout(syncDebounce.current);
     syncDebounce.current = setTimeout(async () => {
-      await supabase.from('players').update({
+      const update = {
         board, pieces, score, is_game_over: isGameOver, updated_at: new Date().toISOString(),
-      }).eq('room_id', roomId).eq('player_id', playerId.current);
+      };
+      if (survivalTime !== null) update.survival_time = survivalTime;
+      await supabase.from('players').update(update)
+        .eq('room_id', roomId).eq('player_id', playerId.current);
     }, 120);
   }
 
@@ -288,11 +349,7 @@ export default function RoomPage() {
     const savedIdx = drag.idx;
     setDrag(null); setSnap(null);
 
-    if (!ok) {
-      sfxNoPlace();
-      return;
-    }
-
+    if (!ok) { sfxNoPlace(); return; }
     sfxDrop();
 
     const board  = boardStateRef.current;
@@ -306,11 +363,11 @@ export default function RoomPage() {
 
     setBumping(true); setTimeout(() => setBumping(false), 350);
 
+    // FIX: pass current board to make3Pieces so pieces always fit
     const np = [...pieces]; np[savedIdx] = null;
-    const fp = np.every(p => !p) ? make3Pieces() : np;
+    const allUsed = np.every(p => !p);
 
     if (lines > 0) {
-      // Collect cells being cleared for particle burst
       const clearCells = [];
       for (let r = 0; r < ROWS; r++)
         for (let c = 0; c < COLS; c++)
@@ -322,47 +379,116 @@ export default function RoomPage() {
         sfxCombo(lines);
         setCombo(`COMBO ×${lines}  +${pts}`);
         setComboKey(k => k + 1);
-        // Screen shake on big combo
         setShaking(true);
         setTimeout(() => setShaking(false), 400);
-        if (lines >= 3) {
-          setFlashing(true);
-          setTimeout(() => setFlashing(false), 180);
-        }
+        if (lines >= 3) { setFlashing(true); setTimeout(() => setFlashing(false), 180); }
       }
 
       setClearing({ rows, cols });
-
-      // Spawn particles immediately
       spawnParticles(particleRef.current, clearCells, cellSize, GAP, PAD, piece.color.light || '#fff');
 
       setTimeout(() => {
         const cb = clearLines(nb, rows, cols);
+        // FIX: generate new pieces based on cleared board state
+        const fp = allUsed ? make3Pieces(cb) : np;
         setMyBoard(cb); setClearing({ rows: [], cols: [] });
         setMyPieces(fp); setMyScore(ns);
+        // FIX: check game over AFTER updating pieces with new board context
         const over = !anyPieceFits(cb, fp);
         if (over) handleGameOver(ns, cb, fp);
         else syncState(cb, fp, ns, false);
       }, 310);
     } else {
-      setMyBoard(nb); setMyPieces(fp); setMyScore(ns);
+      setMyBoard(nb);
+      // FIX: generate new pieces based on updated board
+      const fp = allUsed ? make3Pieces(nb) : np;
+      setMyPieces(fp); setMyScore(ns);
+      // FIX: check game over against actual next pieces
       const over = !anyPieceFits(nb, fp);
       if (over) handleGameOver(ns, nb, fp);
       else syncState(nb, fp, ns, false);
     }
   }, [drag, cellSize, GAP, PAD]);
 
-  async function handleGameOver(finalScore, board, pieces) {
+  async function handleGameOver(finalScore, board, pieces, timeUp = false) {
+    if (gameOverRef.current) return; // prevent double trigger
+    gameOverRef.current = true;
     setMyGameOver(true);
     sfxGameOver();
-    syncState(board, pieces, finalScore, true);
+
+    const elapsed = gameStartAt
+      ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000)
+      : 0;
+    const survivalTime = Math.min(elapsed, GAME_DURATION);
+
+    syncState(board, pieces, finalScore, true, survivalTime);
+
     await supabase.from('leaderboard').insert({
-      username: username.current, score: finalScore, room_id: roomId,
+      username: username.current, score: finalScore,
+      survival_time: survivalTime, room_id: roomId,
     });
-    const { data } = await supabase.from('players').select('is_game_over').eq('room_id', roomId);
-    if (data && data.every(p => p.is_game_over))
-      await supabase.from('rooms').update({ status: 'finished' }).eq('id', roomId);
+
+    // Check if all players done
+    setTimeout(async () => {
+      const { data } = await supabase.from('players').select('is_game_over').eq('room_id', roomId);
+      if (data && data.every(p => p.is_game_over))
+        await supabase.from('rooms').update({ status: 'finished' }).eq('id', roomId);
+    }, 800);
   }
+
+  // ── Rematch ───────────────────────────────────────────────────────────────
+  async function requestRematch() {
+    setWantRematch(true);
+    await supabase.from('players').update({ ready_for_rematch: true })
+      .eq('room_id', roomId).eq('player_id', playerId.current);
+
+    // If both want rematch, reset the game
+    if (oppWantRematch) {
+      await startRematch();
+    }
+  }
+
+  async function startRematch() {
+    const newBoard = emptyBoard();
+    const newPieces = make3Pieces(null);
+    const startAt = new Date().toISOString();
+
+    // Reset both players
+    await supabase.from('players').update({
+      board: newBoard, pieces: newPieces, score: 0,
+      is_game_over: false, survival_time: 0, ready_for_rematch: false, updated_at: new Date().toISOString(),
+    }).eq('room_id', roomId).eq('player_id', playerId.current);
+
+    // Reset room
+    const { data: room } = await supabase.from('rooms').select('round').eq('id', roomId).single();
+    await supabase.from('rooms').update({
+      status: 'playing',
+      game_start_at: startAt,
+      round: (room?.round || 1) + 1,
+    }).eq('id', roomId);
+
+    // Reset local state
+    setMyBoard(newBoard);
+    setMyPieces(newPieces);
+    setMyScore(0);
+    setMyGameOver(false);
+    gameOverRef.current = false;
+    setWantRematch(false);
+    setOppWantRematch(false);
+    setRoomStatus('playing');
+    setGameStartAt(startAt);
+    setTimeLeft(GAME_DURATION);
+  }
+
+  // Watch for both wanting rematch
+  useEffect(() => {
+    if (wantRematch && oppWantRematch && roomStatus === 'finished') {
+      // Only host starts the rematch to avoid race condition
+      supabase.from('rooms').select('host_id').eq('id', roomId).single().then(({ data }) => {
+        if (data?.host_id === playerId.current) startRematch();
+      });
+    }
+  }, [wantRematch, oppWantRematch]);
 
   useEffect(() => {
     window.addEventListener('mousemove', moveDrag);
@@ -377,15 +503,26 @@ export default function RoomPage() {
     };
   }, [moveDrag, endDrag]);
 
-  // Play win/lose SFX when game ends
+  // ── Winner logic: pemenang = siapa yang PALING LAMA bertahan ─────────────
   const winnerRef = useRef(null);
   const winner = useMemo(() => {
-    if (roomStatus !== 'finished' && !(myGameOver && opponent?.is_game_over)) return null;
-    const myS = myScore, opS = opponent?.score || 0;
-    if (myS > opS) return 'you';
-    if (opS > myS) return 'opponent';
+    if (roomStatus !== 'finished') return null;
+    // If game ends by time (both hit 0), compare scores
+    // Otherwise, whoever is still alive wins (longer survival time)
+    const myTime = myGameOver
+      ? (gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0)
+      : GAME_DURATION;
+    const oppTime = opponent?.is_game_over
+      ? (opponent.survival_time || 0)
+      : GAME_DURATION;
+
+    if (myTime > oppTime) return 'you';
+    if (oppTime > myTime) return 'opponent';
+    // Tiebreak by score
+    if (myScore > (opponent?.score || 0)) return 'you';
+    if ((opponent?.score || 0) > myScore) return 'opponent';
     return 'draw';
-  }, [roomStatus, myGameOver, opponent, myScore]);
+  }, [roomStatus, myGameOver, opponent, myScore, gameStartAt]);
 
   useEffect(() => {
     if (winner && !winnerRef.current) {
@@ -393,6 +530,11 @@ export default function RoomPage() {
       if (winner === 'you') sfxWin();
     }
   }, [winner]);
+
+  // Reset winnerRef on rematch
+  useEffect(() => {
+    if (roomStatus === 'playing') winnerRef.current = null;
+  }, [roomStatus]);
 
   // ── Ghost & display board ─────────────────────────────────────────────────
   const ghostCells = useMemo(() => {
@@ -443,17 +585,20 @@ export default function RoomPage() {
     const next = !mutedUI;
     setMutedUI(next);
     setMuted(next);
-    if (!next) musicStarted.current = false; // allow restart
+    if (!next) musicStarted.current = false;
   }
 
   const floatPiece = drag !== null && myPieces[drag.idx];
+
+  // Timer color
+  const timerColor = timeLeft <= 30 ? '#e84040' : timeLeft <= 60 ? '#f5a623' : '#29c76a';
+  const timerPulse = timeLeft <= 10;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <Head><title>Block Blast Mabar — {roomId}</title></Head>
 
-      {/* Full-screen flash overlay */}
       {flashing && <div className={styles.flashOverlay} />}
 
       <div className={`${styles.page} ${shaking ? styles.shake : ''}`}>
@@ -468,11 +613,53 @@ export default function RoomPage() {
             {roomStatus === 'playing'  && '🎮 Sedang bermain'}
             {roomStatus === 'finished' && '🏁 Selesai'}
           </div>
-          {/* Mute button */}
+
+          {/* Timer — only show when playing */}
+          {roomStatus === 'playing' && (
+            <div className={`${styles.timer} ${timerPulse ? styles.timerPulse : ''}`}
+              style={{ color: timerColor, borderColor: timerColor + '44' }}>
+              ⏱ {formatTime(timeLeft)}
+            </div>
+          )}
+
+          {/* Scoreboard toggle */}
+          {roomStatus === 'playing' && opponent && (
+            <button className={styles.scoreboardBtn} onClick={() => setShowScoreboard(s => !s)}>
+              📊
+            </button>
+          )}
+
           <button className={styles.muteBtn} onClick={toggleMute} title={mutedUI ? 'Unmute' : 'Mute'}>
             {mutedUI ? '🔇' : '🔊'}
           </button>
         </div>
+
+        {/* Inline scoreboard strip */}
+        {showScoreboard && roomStatus === 'playing' && opponent && (
+          <div className={styles.scoreStrip}>
+            <div className={styles.scoreStripRow}>
+              <span className={styles.ssName}>{username.current}</span>
+              <div className={styles.ssBarWrap}>
+                <div className={styles.ssBar} style={{
+                  width: `${Math.min(100, (myScore / Math.max(myScore, opponent.score || 1, 1)) * 100)}%`,
+                  background: '#f5a623',
+                }} />
+              </div>
+              <span className={styles.ssScore}>{myScore.toLocaleString()}</span>
+            </div>
+            <div className={styles.scoreStripRow}>
+              <span className={styles.ssName}>{opponent.username}</span>
+              <div className={styles.ssBarWrap}>
+                <div className={styles.ssBar} style={{
+                  width: `${Math.min(100, ((opponent.score || 0) / Math.max(myScore, opponent.score || 1, 1)) * 100)}%`,
+                  background: '#2e7de8',
+                }} />
+              </div>
+              <span className={styles.ssScore}>{(opponent.score || 0).toLocaleString()}</span>
+            </div>
+            <div className={styles.ssNote}>⚡ Yang bertahan lebih lama = menang!</div>
+          </div>
+        )}
 
         <div className={styles.arena}>
           {/* MY BOARD */}
@@ -492,12 +679,7 @@ export default function RoomPage() {
                 ghostValid={snap?.valid ?? true}
                 cellSize={cellSize}
               />
-              {/* Particle canvas overlay */}
-              <canvas
-                ref={particleRef}
-                className={styles.particleCanvas}
-                style={{ pointerEvents: 'none' }}
-              />
+              <canvas ref={particleRef} className={styles.particleCanvas} style={{ pointerEvents: 'none' }} />
               {snapBox}
               {combo && <div key={comboKey} className={styles.combo}>{combo}</div>}
               {myGameOver && (
@@ -514,8 +696,7 @@ export default function RoomPage() {
                 if (!p) return <div key={i} className={styles.slotEmpty} />;
                 const lifting = drag?.idx === i;
                 return (
-                  <div
-                    key={p.id}
+                  <div key={p.id}
                     className={`${styles.slot} ${lifting ? styles.lifting : ''}`}
                     onMouseDown={e => startDrag(i, e)}
                     onTouchStart={e => startDrag(i, e)}
@@ -527,8 +708,16 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {/* VS */}
-          <div className={styles.vs}>VS</div>
+          {/* VS + Timer center */}
+          <div className={styles.vsDivider}>
+            <div className={styles.vs}>VS</div>
+            {roomStatus === 'playing' && (
+              <div className={`${styles.vsTimer} ${timerPulse ? styles.timerPulse : ''}`}
+                style={{ color: timerColor }}>
+                {formatTime(timeLeft)}
+              </div>
+            )}
+          </div>
 
           {/* OPPONENT BOARD */}
           <div className={styles.playerSection}>
@@ -568,7 +757,7 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Winner overlay */}
+        {/* ── Winner overlay (no redirect, stays in room) ── */}
         {winner && (
           <div className={styles.winnerOverlay}>
             <div className={styles.winnerCard}>
@@ -576,11 +765,47 @@ export default function RoomPage() {
               {winner === 'opponent' && <><div className={styles.winnerEmoji}>😢</div><div className={styles.winnerTitle}>KAMU KALAH</div></>}
               {winner === 'draw'     && <><div className={styles.winnerEmoji}>🤝</div><div className={styles.winnerTitle}>SERI!</div></>}
               {winner === 'you' && <div className={styles.confetti}>{Array.from({length:16}).map((_,i)=><span key={i} style={{'--i':i}}/>)}</div>}
-              <div className={styles.winnerScores}>
-                <div><span className={styles.wName}>{username.current}</span><span className={styles.wScore}>{myScore.toLocaleString()}</span></div>
-                {opponent && <div><span className={styles.wName}>{opponent.username}</span><span className={styles.wScore}>{(opponent.score||0).toLocaleString()}</span></div>}
+
+              {/* Final scoreboard */}
+              <div className={styles.finalBoard}>
+                <div className={styles.fbTitle}>📊 Hasil Akhir</div>
+                <div className={styles.fbRow + ' ' + (winner === 'you' ? styles.fbWinner : '')}>
+                  <span className={styles.fbName}>👤 {username.current}</span>
+                  <span className={styles.fbTime}>⏱ {formatTime(
+                    myGameOver
+                      ? Math.min(
+                          gameStartAt ? Math.floor((Date.now() - new Date(gameStartAt).getTime()) / 1000) : 0,
+                          GAME_DURATION
+                        )
+                      : GAME_DURATION
+                  )}</span>
+                  <span className={styles.fbScore}>{myScore.toLocaleString()}</span>
+                </div>
+                {opponent && (
+                  <div className={styles.fbRow + ' ' + (winner === 'opponent' ? styles.fbWinner : '')}>
+                    <span className={styles.fbName}>👤 {opponent.username}</span>
+                    <span className={styles.fbTime}>⏱ {formatTime(opponent.survival_time || 0)}</span>
+                    <span className={styles.fbScore}>{(opponent.score || 0).toLocaleString()}</span>
+                  </div>
+                )}
+                <div className={styles.fbRule}>Pemenang = yang bertahan lebih lama ⚡</div>
               </div>
-              <button className={styles.homeBtn} onClick={() => router.push('/')}>← Kembali ke Lobby</button>
+
+              {/* Rematch buttons */}
+              <div className={styles.rematchRow}>
+                {!wantRematch ? (
+                  <button className={styles.rematchBtn} onClick={requestRematch}>
+                    🔄 Main Lagi
+                  </button>
+                ) : (
+                  <div className={styles.rematchWaiting}>
+                    {oppWantRematch
+                      ? '✅ Memulai ulang...'
+                      : `⏳ Menunggu ${opponent?.username || 'lawan'}...`}
+                  </div>
+                )}
+                <button className={styles.homeBtn} onClick={() => router.push('/')}>← Lobby</button>
+              </div>
             </div>
           </div>
         )}
