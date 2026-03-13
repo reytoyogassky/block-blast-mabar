@@ -235,7 +235,7 @@ export default function RoomPage() {
       .select('*')
       .eq('room_id', roomId)
       .eq('player_id', playerId.current)
-      .single();
+      .maybeSingle();
 
     if (existing) {
       // Reconnect: restore state from DB, don't reset
@@ -252,20 +252,16 @@ export default function RoomPage() {
       // New player: insert fresh
       const pieces = make3Pieces(null);
       setMyPieces(pieces);
-      const { error } = await supabase.from('players').insert({
+      // Base columns (always exist)
+      const baseRow = {
         room_id: roomId, player_id: playerId.current,
         username: username.current, board: emptyBoard(),
         pieces, score: 0, is_game_over: false,
-        survival_time: 0, ready_for_rematch: false,
-      });
+      };
+      const { error } = await supabase.from('players').insert(baseRow);
       if (error) {
-        // Fallback to upsert if insert fails (race condition)
-        await supabase.from('players').upsert({
-          room_id: roomId, player_id: playerId.current,
-          username: username.current, board: emptyBoard(),
-          pieces, score: 0, is_game_over: false,
-          survival_time: 0, ready_for_rematch: false,
-        }, { onConflict: 'room_id,player_id' });
+        // Fallback upsert (race condition / duplicate)
+        await supabase.from('players').upsert(baseRow, { onConflict: 'room_id,player_id' });
       }
     }
 
@@ -372,9 +368,19 @@ export default function RoomPage() {
       const update = {
         board, pieces, score, is_game_over: isGameOver, updated_at: new Date().toISOString(),
       };
+      // Try with new columns, fall back to base columns if schema is old
+      const tryUpdate = async (data) => {
+        const { error } = await supabase.from('players').update(data)
+          .eq('room_id', roomId).eq('player_id', playerId.current);
+        return error;
+      };
       if (survivalTime !== null) update.survival_time = survivalTime;
-      await supabase.from('players').update(update)
-        .eq('room_id', roomId).eq('player_id', playerId.current);
+      const err = await tryUpdate(update);
+      if (err) {
+        // Schema might be old — retry without new columns
+        const { survival_time: _s, ready_for_rematch: _r, ...safeUpdate } = update;
+        await tryUpdate(safeUpdate);
+      }
     }, 120);
   }
 
@@ -504,8 +510,13 @@ export default function RoomPage() {
     syncState(board, pieces, finalScore, true, survivalTime);
 
     await supabase.from('leaderboard').insert({
-      username: username.current, score: finalScore,
-      survival_time: survivalTime, room_id: roomId,
+      username: username.current, score: finalScore, room_id: roomId,
+      ...(survivalTime !== null ? { survival_time: survivalTime } : {}),
+    }).then(({ error }) => {
+      if (error) {
+        // Fallback without survival_time
+        supabase.from('leaderboard').insert({ username: username.current, score: finalScore, room_id: roomId });
+      }
     });
 
     // Check if all players done
@@ -519,8 +530,11 @@ export default function RoomPage() {
   // ── Rematch ───────────────────────────────────────────────────────────────
   async function requestRematch() {
     setWantRematch(true);
+    // Try to set ready_for_rematch (new column, may not exist in old schema)
     await supabase.from('players').update({ ready_for_rematch: true })
-      .eq('room_id', roomId).eq('player_id', playerId.current);
+      .eq('room_id', roomId).eq('player_id', playerId.current).then(({ error }) => {
+        if (error) console.warn('ready_for_rematch column missing, run migration SQL');
+      });
 
     // If both want rematch, reset the game
     if (oppWantRematch) {
@@ -536,7 +550,7 @@ export default function RoomPage() {
     // Reset both players
     await supabase.from('players').update({
       board: newBoard, pieces: newPieces, score: 0,
-      is_game_over: false, survival_time: 0, ready_for_rematch: false, updated_at: new Date().toISOString(),
+      is_game_over: false, updated_at: new Date().toISOString(),
     }).eq('room_id', roomId).eq('player_id', playerId.current);
 
     // Reset room
@@ -545,7 +559,12 @@ export default function RoomPage() {
       status: 'playing',
       game_start_at: startAt,
       round: (room?.round || 1) + 1,
-    }).eq('id', roomId);
+    }).eq('id', roomId).then(({ error }) => {
+      if (error) {
+        // Old schema without game_start_at/round — update just status
+        supabase.from('rooms').update({ status: 'playing' }).eq('id', roomId);
+      }
+    });
 
     // Reset local state
     setMyBoard(newBoard);
